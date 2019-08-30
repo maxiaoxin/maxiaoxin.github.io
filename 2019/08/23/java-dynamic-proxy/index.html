@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。 代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。 在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实">
+<meta name="keywords" content="JAVA,动态代理">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Java动态代理笔记">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。 代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。 在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-08-23T08:46:34.781Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Java动态代理笔记">
+<meta name="twitter:description" content="今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。 代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。 在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>Java动态代理笔记 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">Java动态代理笔记
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:46:34" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。</p>
+<p>代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。</p>
+<p>在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实现细节和副作用。常见的使用代理的场合有：</p>
+<ol>
+<li>远程代理（Remote Proxy）：将一个远程对象包装成本地对象。WIKI的例子是ATM，ATM保存了银行信息，用户访问ATM等同于访问银行。</li>
+<li>虚拟代理（Virtual Proxy）：对象可以不实际存在，只有当访问时才会真正生成（也可以实现一部分）。参考延迟加载。</li>
+<li>保护代理（Protection Proxy）：在实际调用前/中/后进行资源安全性的检查。</li>
+<li>Copy-on-Write代理：虚拟代理的一种。把复制（克隆）拖延到只有在客户端需要时，才真正采取行动。</li>
+<li>Cache代理：为某一个目标操作的结果提供临时的存储空间，以便多个客户端可以共享这些结果。</li>
+<li>防火墙（Firewall）代理：保护目标，不让恶意用户接近。</li>
+<li>同步化（Synchronization）代理：使几个用户能够同时使用一个对象而没有冲突。</li>
+<li>智能引用（Smart Reference）代理：当一个对象被引用时，提供一些额外的操作，比如将对此对象调用的次数记录下来等。</li>
+</ol>
+<p>组合/继承都可以实现代理模式，当然静态代理在JAVA里使用继承会简单一些。即A’继承A，在每个父方法调用前后做一些操作。</p>
+<p>JAVA也支持动态代理，按我理解应该是组合模式。对于真实对象object，需要实现一个InvocationHandler接口，再通过Proxy.newProxyInstance(classLoader,interfaces,handler)来创建代理对象。</p>
+<ol>
+<li>classLoader: 生成的代理类所在的classLoader。（下次学习一下classLoader）。</li>
+<li>interfaces：想要代理的接口的集合。</li>
+<li>handler：我们刚才创建的handler，使用它来实际调用object，并做一些其他操作。</li>
+</ol>
+<p>第二个参数interfaces很重要，JAVA动态代理会动态创建一个类似<code>com.sun.proxy.$Proxy0</code>的类，这个类实现了所有的interfaces。在继承关系比较复杂的情况下，个人建议写死会比较好，使用object.getClass().getInterfaces()会出现一些意想不到的情况。比如有接口I1,I2,I3,C1实现了I1,I2，C2继承了C1，且实现了I3，那么一个C2的实例c2.getClass().getInterfaces()返回结果只有I3，无法代理I1和I2。</p>
+<p>在实现InvocationHandler接口时，我们需要实现invoke(proxy, method, args)方法，其中可能会调用method.invode(object,args)，当object因为某些原因报错时，method.invode会抛出InvocationTargetException异常：这与所预想抛出的异常不一致，从而导致上层调用者捕捉不到对应的异常。因此最好写成</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/JAVA/" rel="tag"># JAVA</a>
+            
+              <a href="/tags/动态代理/" rel="tag"># 动态代理</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/08/23/jvm1/" rel="next" title="JVM学习（1）事前准备">
+                  <i class="fa fa-chevron-left"></i> JVM学习（1）事前准备
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+                <a href="/2019/08/23/linux-cmd-nc/" rel="prev" title="linux传输命令">
+                  linux传输命令 <i class="fa fa-chevron-right"></i>
+                </a>
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">9</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">12</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>

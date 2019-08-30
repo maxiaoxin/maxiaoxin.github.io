@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。 内存模型和参数传递比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直">
+<meta name="keywords" content="JAVA,JNI">
+<meta property="og:type" content="article">
+<meta property="og:title" content="JNI使用中的一些注意事项">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/08/23/jni/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。 内存模型和参数传递比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-08-23T08:41:05.738Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="JNI使用中的一些注意事项">
+<meta name="twitter:description" content="很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。 内存模型和参数传递比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/08/23/jni/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>JNI使用中的一些注意事项 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">JNI使用中的一些注意事项
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:41:05" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。</p>
+<h3 id="内存模型和参数传递"><a href="#内存模型和参数传递" class="headerlink" title="内存模型和参数传递"></a>内存模型和参数传递</h3><p>比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直接用参数传过来。如果数据量比较大，或者不是基本类型，可能需要用byte[]传。如果数据量巨大，只能用文件等形式传递了。个人目前处理的文件一般是不超过20MB的小文件，因此选择第二种方式传递参数（虽然数据在heap区和native区来回复制也有一定代价），不过好在数据量不是很大，可以接受——另外一个使用byte[]而非DirectByteBuffer的重要原因是我还是有可能会用java代码来处理数据，而java处理DirectByteBuffer有时候很麻烦。。如果是非常大的文件（比如视频文件），使用临时文件/DirectBuffer更好一些。</p>
+<p>流数据的处理更复杂一些。现在似乎没有非常方便的在本地代码中读InputStream等的方法（当然可以做到，比如使用<code>GetMethodID&amp;Call??Method</code>等），但我没试过这种方式——即使不考虑效率因素，在本地代码中调用JAVA方法也不是一个好选择，毕竟本地代码处理JAVA运行中的各种异常实在太复杂了。最好还是将数据预处理后，交由本地代码处理，本地代码尽量保持简洁。</p>
+<p>当然最重要的还是保证内存不泄漏，本地代码中new/malloc自不必说，记得在最后调用DeleteLocalRef、ReleaseByteArrayElements等函数释放JAVA对象的引用。</p>
+<h3 id="加载动态库"><a href="#加载动态库" class="headerlink" title="加载动态库"></a>加载动态库</h3><p>我用的是org.scijava:native-lib-loader。本质上调用的还是System.load，这个库的做法是将动态库extract提取到一个临时文件，然后System.load()，不想引入新的库的话可以自己手动实现一下。</p>
+<h3 id="编译和调试"><a href="#编译和调试" class="headerlink" title="编译和调试"></a>编译和调试</h3><p>首先编译环境最好和目标运行环境一致，否则可能会出现各种意想不到的状况，比如系统库版本不兼容等。</p>
+<p>如果是自己重新写一个库可以规避掉很多问题。我遇到的情况通常是需要改写现有的库的接口，方便JAVA调用，那么至少需要</p>
+<ul>
+<li>修改源代码，暴露出可供调用的JNI外部函数</li>
+<li>改写MakeFile/CMakeLists，将原本的可执行文件编译为动态链接库</li>
+</ul>
+<p>只调试本地代码相对简单，但有些错误只有带JAVA调用时才会出现。我使用的IDE是CLion，暂时没找到比较方便的调试方法，目前的做法是加上DEBUG参数编译动态库后，</p>
+<ol>
+<li>在调用native方法前打个断点，运行至断点</li>
+<li>找到java进程的ID（ps，jps或者在程序里打印出来）</li>
+<li>CLion中Run - Attach to Local Process，选择对应的PID，在要调试的地方打断点</li>
+<li>继续java进程，进入本地代码中的断点，开始调试</li>
+</ol>
+<p>尽管GDB Remote Debug可以远程调试，但似乎不支持远程调试JNI？</p>
+<h3 id="代码编写时的注意事项"><a href="#代码编写时的注意事项" class="headerlink" title="代码编写时的注意事项"></a>代码编写时的注意事项</h3><ol>
+<li>很多库实现时只支持FILE<em>，改写为读内存很麻烦。这里推荐fmemopen和open_memstream，可以将数组转变为FILE</em>。</li>
+<li>很多C/C++代码逻辑中没有异常处理，我个人也不建议使用throw/catch。但JAVA中使用异常捕捉机制会方便很多，且有时候本地代码中遇到错误时也需要把异常信息传给java进程，那么在C/C++代码运行结束且发现运行出错时，手动抛出一个JAVA异常（调用(*env)-&gt;ThrowNew()），可能是一个比较好的风格。</li>
+</ol>
+<h3 id="线程安全"><a href="#线程安全" class="headerlink" title="线程安全"></a>线程安全</h3><p>有些库可能只支持单线程，或者可能最初设计的情景仅仅是程序运行，输入一个文件，处理，输出，程序结束：而内部实现可能是多线程。要处理多个文件，需要同时启动多个程序。</p>
+<p>如果简单的用JNI调用，很可能会在并行调用时产生冲突，因为这种库会有大量的全局/静态变量，而没有任何线程同步操作，甚至不可能同步。</p>
+<p>简单的处理方法是把JNI函数加锁，即同一时刻一个库暴露出的所有函数至多只有一个调用。复杂的处理方法就是自己手动改代码，把所有全局/静态变量统计出来放在一个struct里，调用时new一个，调用结束时delete掉。</p>
+<p>当然如果对库的了解比较深的话可以改写的更优雅一些；如果库本身很复杂，改造起来很麻烦，那就直接加锁吧。</p>
+<h3 id="避免使用较高版本的glibc"><a href="#避免使用较高版本的glibc" class="headerlink" title="避免使用较高版本的glibc"></a>避免使用较高版本的glibc</h3><p>使用时发现由于线上机器的gilbc版本可能低于本地编译环境,而glibc升级非常麻烦且会引起一系列问题,所以尽量避免使用较高版本glibc提供的函数</p>
+<p>一种避免使用较高版本glibc的办法见(Linux程序兼容),适用于低版本glibc也有此函数的情况</p>
+<ul>
+<li>查看线上环境支持的glibc版本 <code>strings /lib64/libc.so.6 | grep GLIBC_</code></li>
+<li>查看编译出来的二进制库/程序引用的glibc版本,检查有无冲突,及冲突的glibc版本 <code>readelf -s $libname | grep -oP “GLIBC_[\d.]*” | sort | uniq</code></li>
+<li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
+<li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/JAVA/" rel="tag"># JAVA</a>
+            
+              <a href="/tags/JNI/" rel="tag"># JNI</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/08/23/nginx-qps/" rel="next" title="Shell命令查看Nginx QPS">
+                  <i class="fa fa-chevron-left"></i> Shell命令查看Nginx QPS
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+                <a href="/2019/08/23/jvm1/" rel="prev" title="JVM学习（1）事前准备">
+                  JVM学习（1）事前准备 <i class="fa fa-chevron-right"></i>
+                </a>
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-3"><a class="nav-link" href="#内存模型和参数传递"><span class="nav-number">1.</span> <span class="nav-text">内存模型和参数传递</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#加载动态库"><span class="nav-number">2.</span> <span class="nav-text">加载动态库</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#编译和调试"><span class="nav-number">3.</span> <span class="nav-text">编译和调试</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#代码编写时的注意事项"><span class="nav-number">4.</span> <span class="nav-text">代码编写时的注意事项</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#线程安全"><span class="nav-number">5.</span> <span class="nav-text">线程安全</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#避免使用较高版本的glibc"><span class="nav-number">6.</span> <span class="nav-text">避免使用较高版本的glibc</span></a></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">9</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">12</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>

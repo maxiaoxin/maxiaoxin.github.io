@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="其实我玩过的页游也就是舰C，这游戏最大的特点就是制作者恨不得让玩家每天996的肝游戏（如果玩家稍微有点追求），发展到现在可以说没辅助没法玩。不过这个游戏也可以很简单的进行辅助操作，因为页面之间变化不大，操作简单：玩家也就只能点点鼠标。 原理简单来说还是模拟人类玩家的操作方式：根据页面图像来进行下一步操作。 页面图像获取一般还是用GetPixel之类的API。在windows上，可能用DX系列的AP">
+<meta name="keywords" content="辅助器,舰队Collection">
+<meta property="og:type" content="article">
+<meta property="og:title" content="页游辅助思路">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/08/23/cheat1/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="其实我玩过的页游也就是舰C，这游戏最大的特点就是制作者恨不得让玩家每天996的肝游戏（如果玩家稍微有点追求），发展到现在可以说没辅助没法玩。不过这个游戏也可以很简单的进行辅助操作，因为页面之间变化不大，操作简单：玩家也就只能点点鼠标。 原理简单来说还是模拟人类玩家的操作方式：根据页面图像来进行下一步操作。 页面图像获取一般还是用GetPixel之类的API。在windows上，可能用DX系列的AP">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-08-23T08:40:53.626Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="页游辅助思路">
+<meta name="twitter:description" content="其实我玩过的页游也就是舰C，这游戏最大的特点就是制作者恨不得让玩家每天996的肝游戏（如果玩家稍微有点追求），发展到现在可以说没辅助没法玩。不过这个游戏也可以很简单的进行辅助操作，因为页面之间变化不大，操作简单：玩家也就只能点点鼠标。 原理简单来说还是模拟人类玩家的操作方式：根据页面图像来进行下一步操作。 页面图像获取一般还是用GetPixel之类的API。在windows上，可能用DX系列的AP">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/08/23/cheat1/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>页游辅助思路 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/cheat1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">页游辅助思路
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:40:53" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>其实我玩过的页游也就是舰C，这游戏最大的特点就是制作者恨不得让玩家每天996的肝游戏（如果玩家稍微有点追求），发展到现在可以说没辅助没法玩。不过这个游戏也可以很简单的进行辅助操作，因为页面之间变化不大，操作简单：玩家也就只能点点鼠标。</p>
+<p>原理简单来说还是模拟人类玩家的操作方式：根据页面图像来进行下一步操作。</p>
+<p>页面图像获取一般还是用GetPixel之类的API。在windows上，可能用DX系列的API更好一些，但调用实在太复杂，且兼容性比较差。话说自从舰C改版到HTML5后，基本只能用chrome或者chromium内核来玩了，而这个浏览器似乎不支持PrintWindow等可以通过窗口DC直接获取截图的方法——或者说DX窗口都不支持PrintWindow，导致我只能用全屏截图的API或者类似的API，而不能把游戏窗口隐藏到后端：毕竟挂机的时候也希望干点别的事。个人猜测可能是因为DX截图是基于显示设备的，没办法获取被隐藏的窗口。</p>
+<p>图像获取后的另一个问题是”判断“，往大了说是图像识别，但通常只要判断子图是否一致，甚至某几个像素是否一致就可以了。按键精灵这种外挂似乎可以通过子图识别来确定，不过我觉得舰C不太需要这么高端的功能，毕竟几乎所有按钮出现的位置都不会变，因此不需要去”找“，而只需要在特定位置”判断“某个子图是否出现即可。</p>
+<p>模拟操作相对而言很简单，获取到窗口句柄后PostMessage就可以了。</p>
+<p>”输入“和”输出“手段就这样愉快的决定了，接下来是辅助器的设计思路。由于舰C这种页游的页面显示变化很小，场景间处理逻辑差别很大，关联很小，故可以用状态机模型来进行编程：维持一个context，将每一个场景视为”state“，出现某个图像/自定义函数作为”condition“，如果满足条件则进行状态切换/改变上下文/进行操作。舰C的context比较好获得，大部分可以通过游戏内部数据获取，可以通过截取解析HTTP包获得，或者干脆用现成的工具74EO解析。一般的页游也差不多，如果不想解析包，也可以直接处理图像获得（比如血条什么的），但毕竟不如直接解包来的准确。</p>
+<p>举个例子，比如在舰C里刷闪，涉及到的场景大致有主页面、队伍编成页面、补给页面、地图选择页面、战斗页面，切换条件分别为：</p>
+<ul>
+<li>主页面：如果编成未结束进入编程场景；如果没补给完则通过补给按钮进入补给场景；否则进入地图选择场景</li>
+<li>队伍编成场景：选择要刷闪的船，选完后返回主页面。没有要刷闪的船则在返回后跳出。</li>
+<li>补给场景：能补给则补给，补给完则返回主页面。</li>
+<li>地图选择场景：进入1-1，切换至战斗场景。</li>
+<li>战斗场景：不停出击，直至返回主页面。<br>每个场景内的操作相对简单，比如在战斗场景里，如果出现阵型选择则点击单纵（实际上刷闪因为只有三艘船不会选择阵型），出现战后结算则随便点一下，出现是否前进则点击前进，出现是否入夜则点击不入夜。</li>
+</ul>
+<p>可以思考一下如何在刷闪的时候收发远征？</p>
+<p>在构筑好状态机后，我们需要两个协程，协程A每隔一段时间（比如3秒）截图，将截图放入上下文，控制权交给协程B；协程B跑上面这个状态机，根据上下文进行一轮条件判断和操作，再交给协程A。</p>
+<p>我一开始的代码逻辑是顺序的：判断图像-进行操作-判断图像-进行操作。。。。这种编程思路的坏处是，如果某个判断/操作失败了（比如窗口没收到点击消息、某个图片迟迟没弹出等），需要进行异常处理的逻辑会变得非常复杂。而页游中同一场景中的条件判断几乎不重复，即使某次判断/操作失败了也可以再一次正确处理。另外，如果游戏机制改变了，需要插入的逻辑也会比较简单。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/辅助器/" rel="tag"># 辅助器</a>
+            
+              <a href="/tags/舰队Collection/" rel="tag"># 舰队Collection</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/08/23/linux-cmd-nc/" rel="next" title="linux传输命令">
+                  <i class="fa fa-chevron-left"></i> linux传输命令
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+                <a href="/2019/08/23/arthas/" rel="prev" title="阿里Arthas学习">
+                  阿里Arthas学习 <i class="fa fa-chevron-right"></i>
+                </a>
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">9</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">12</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
