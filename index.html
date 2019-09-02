@@ -191,6 +191,186 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/30/jvm3/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/30/jvm3/" class="post-title-link" itemprop="url">JVM学习（3）垃圾回收器和内存分配策略</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-30 00:00:00" itemprop="dateCreated datePublished" datetime="2019-08-30T00:00:00+08:00">2019-08-30</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-01 16:19:28" itemprop="dateModified" datetime="2019-09-01T16:19:28+08:00">2019-09-01</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>垃圾回收（Garbage Collection,GC）机制是JVM的核心之一，而GC时需要考虑几个问题：</p>
+<ol>
+<li>回收哪些内存</li>
+<li>什么时候回收</li>
+<li>如何回收</li>
+</ol>
+<h2 id="可达性分析"><a href="#可达性分析" class="headerlink" title="可达性分析"></a>可达性分析</h2><p>判断一个object是否死亡主要有两种方式：引用计数和可达性分析。引用计数相对简单，但在object互相引用时会造成内存泄漏，所以JVM使用了可达性分析：一个存活的object所引用的object也是存活的。最初的存活对象被称为GC Roots，包含以下几类：</p>
+<ol>
+<li>虚拟机栈（栈帧中的本地变量表）中引用的对象。</li>
+<li>方法区中类静态属性引用的对象。</li>
+<li>方法区中常量引用的对象。</li>
+<li>本地方法栈中JNI引用的对象。</li>
+</ol>
+<h3 id="引用（reference）"><a href="#引用（reference）" class="headerlink" title="引用（reference）"></a>引用（reference）</h3><p>值得一提的是“引用”，Java中的引用分为以下几类：</p>
+<ol>
+<li>强引用（strong reference）：正常代码中的引用，比如Object a = new Object()</li>
+<li>软引用（soft reference）：SoftReference类，描述一些还有用但非必须的对象。这类引用一般不会回收，但如果GC时判断可能会OOM，则会回收这类引用，如果回收失败时还可能OOM，则报错。</li>
+<li>弱引用（weak reference）：WeakReference类，和SoftReference类似，但只能存活到下一次GC前。</li>
+<li>虚引用（phantom reference）：最弱的引用，不对对象生存周期有任何影响，这类引用返回的对象总是null，不过如果GC回收这个对象，那么会接收到一个消息。</li>
+</ol>
+<p>SoftReference主要用于缓存，比如google的LoadingCache。PhantomReference主要用来实现类似析构函数之类的功能。这里又牵扯到finalize()方法，JVM规定如果object没有覆写finalize()或者finalize()已被JVM调用过，那么GC时就不用管finalize()。而如果JVM判断需要执行finalize()方法，那么会把这个object扔到一个叫F-Queue的队列里，由一个低优先级的Finalizer线程去依次执行各个finalize()方法：最关键的地方在于这个Finalizer不保证finalize()能被执行完，毕竟如果一个finalize()死循环或者超时了会影响整个JVM的工作，所以可能执行到一半就停了。此外，如果finalize()里又和其他对象建立了引用关系，执行完finalize()，GC会判断这个object又重新可达了，会不去回收这个对象，相当于c++中一个object在执行完析构函数后还正常存活。</p>
+<p>总的来说因为finalize()有各种各样的坑，所以在需要类似析构函数的地方采用PhantomReference来代替。一个最典型的例子是DIrectBuffer，这个类有一个成员是cleaner，它是PhantomReference的子类，当一个DIrectBuffer被GC时会把这个对象塞到指定的ReferenceQueue里，然后再释放引用的堆外内存。</p>
+<h3 id="方法区回收"><a href="#方法区回收" class="headerlink" title="方法区回收"></a>方法区回收</h3><p>方法区主要有两种数据可能会被回收：废弃常量和无用的类。常量回收和普通object回收很类似，只是这些常量放在方法区而已；无用的类判断起来很严格，要求</p>
+<ol>
+<li>没有该类的任何实例</li>
+<li>加载该类的ClassLoader已被回收</li>
+<li>该类对应的java.lang.Class对象没有被任何地方引用，即无法在任何地方通过反射访问该类的方法</li>
+</ol>
+<p>一般来说类还是不需要被回收的，但对于大量使用反射、动态代理、cglib等ByteCode框架、动态生成JSP以及OSGi这些频繁自定义ClassLoader的场景都需要虚拟机具备类卸载功能，保证永久代不会溢出。值得一提的是JDK1.8以后取消了永久代，取而代之的是元空间（metaspace），metaspace使用的是native memory，且可以动态增加（当然也有上限，通过MaxMetaspaceSize配置）。这样可以极大降低永久代溢出的风险。</p>
+<h2 id="垃圾回收算法"><a href="#垃圾回收算法" class="headerlink" title="垃圾回收算法"></a>垃圾回收算法</h2><h3 id="标记-清除（mark-sweep）算法"><a href="#标记-清除（mark-sweep）算法" class="headerlink" title="标记-清除（mark-sweep）算法"></a>标记-清除（mark-sweep）算法</h3><p>简单来说就是标记哪些部分的内存需要回收（见前文），标记完后统一回收。问题显而易见：运行一段时间后会产生大量的内存碎片，导致内存利用率降低。此外单线程的mark-sweep必然效率低。</p>
+<h3 id="复制（copy）算法"><a href="#复制（copy）算法" class="headerlink" title="复制（copy）算法"></a>复制（copy）算法</h3><p>这种算法需要将内存分成（等大的）A，B两部分，分配内存时从A开始顺序分配，GC的时候把A中判定为存活的object复制到B，然后再从B开始顺序分配。好处是简单高效，缺点也显而易见：有一半内存被闲置了。</p>
+<p>一般新生代采用这种回收方法，即将内存分成一大块的eden区和两块较小的survivor区，每次使用eden区和一个survivor区。内存从eden区开始顺序分配，假设eden区能回收绝大部分内存，那么GC的时候就把eden区和survivorA区的内存copy到survivorB区即可，这样就可以在只闲置一个survivor内存的情况下保证内存分配和回收足够高效。</p>
+<p>在某些情况下可能survivor区不够大，需要依赖其他部分内存（老年代）进行分配担保（handle promotion），即把一部分对象直接扔到老年代。</p>
+<h3 id="标记-整理（mark-compact）算法"><a href="#标记-整理（mark-compact）算法" class="headerlink" title="标记-整理（mark-compact）算法"></a>标记-整理（mark-compact）算法</h3><p>mark-sweep的改进，在标记完后把所有存活object向一个方向移动，可以避免内存闲置。</p>
+<h3 id="分代收集（generational-collection）算法"><a href="#分代收集（generational-collection）算法" class="headerlink" title="分代收集（generational collection）算法"></a>分代收集（generational collection）算法</h3><p>根据对象生存周期的不同把内存划成几块（一般是分为新生代和老年代），在各部分内存采用不同的回收算法。比如在年轻代可以用复制算法，而老年代可以用标记-清理或标记-整理算法。</p>
+<h2 id="HotSpot算法实现"><a href="#HotSpot算法实现" class="headerlink" title="HotSpot算法实现"></a>HotSpot算法实现</h2><h3 id="GC-Roots和OopMap"><a href="#GC-Roots和OopMap" class="headerlink" title="GC Roots和OopMap"></a>GC Roots和OopMap</h3><p>进行可达性分析时有两个问题：</p>
+<ol>
+<li>GC Roots包括两部分：全局性引用（如常量和类静态属性）和执行上下文（如栈帧中的本地变量表）。但这两部分内存包含的不仅是reference，还有比如方法，int，long型变量等，逐个检查这些内存中的引用会比较费时。</li>
+<li>可达性分析时需要保证分析过程中的对象引用关系不变，这点是GC需要停顿所有java执行线程（stop the world）的重要原因之一。</li>
+</ol>
+<p>针对第一个问题，HotSpot采用了一种称为OopMap的数据结构来记录对象内哪些地方存放着reference，在类加载完后就可以把对象内什么偏移量上是什么类型的数据计算出来。这种GC方式被称为准确式GC，准确式GC和保守式GC的区别可以参考<a href="https://blog.csdn.net/woaigaolaoshi/article/details/51439227" target="_blank" rel="noopener">我爱学Java之JVM中的OopMap</a>。HotSpot在JIT（just in time）编译过程中，会插入相关指令来标明哪些地方是对象引用，如下图中0x026eb730到0x026eb7be这段区间内，exb寄存器和栈中偏移为16的内存区域各有一个普通对象指针的引用。</p>
+<p><img src="/images/jvm_oopmap_sample.png" alt="String.hashCode()方法编译后的本地代码"></p>
+<h3 id="安全点（safe-point）"><a href="#安全点（safe-point）" class="headerlink" title="安全点（safe point）"></a>安全点（safe point）</h3><p>OopMap能加速GC Roots枚举，但本身也会占用一定空间，因此不是所有指令都生成对应的OopMap，只在特定位置生成OopMap，记录了执行到该方法的某条指令的时候，栈上和寄存器里哪些位置是引用，这样的位置称为安全点（safe point）。一般safe point选在可能“长时间执行”的地方，包括</p>
+<ol>
+<li>循环的末尾 </li>
+<li>方法临返回前 / 调用方法的call指令后 </li>
+<li>可能抛异常的位置</li>
+</ol>
+<p>另一个问题在于如何在GC时让所有线程（除JNI）外都跑到最近的safe point再停下来，有两种方式：</p>
+<ol>
+<li>抢先式中断（Preemptive Suspension）：GC发生时，先把所有线程中断，如果发现线程部在safe point上，则恢复执行，让它跑到安全点上</li>
+<li>主动式中断（Voluntary Suspension）：GC时先设一个标志，各个线程会轮询这个标志，如果这个标志为true时就自己中断</li>
+</ol>
+<p>现在一般都用主动式中断，比如下边这个代码，GC需要暂停线程时会把0x160100内存页设置为不可读，那么线程执行到test时会产生一个自陷异常信号，在预先注册的异常处理器中暂停线程，从而实现等待。</p>
+<p><img src="/images/jvm_safe_point_sample.png" alt="轮询指令"></p>
+<p>话说回来，让线程主动自陷的前提是线程本身正在运行，但如果线程并没有执行，比如正在sleep、blocked等等，因此引入安全区域（safe region）的概念。所谓safe region，是指这段代码片段中引用关系不会发生变化。线程进入safe region后就不管GC设置的标志了，但出safe region时需要检查GC是否已经完成了根节点枚举或者整个GC过程，没有的话就等到GC结束。</p>
+<h2 id="垃圾回收器"><a href="#垃圾回收器" class="headerlink" title="垃圾回收器"></a>垃圾回收器</h2><p>HotSpot提供了很多垃圾回收器，方便用户在特定情况下使用合适的垃圾回收方式。下图列出了适合新生代和老年代的各个垃圾回收器，注意并不是所有垃圾回收器可以配合使用。</p>
+<p><img src="/images/jvm_gc_types.png" alt="HotSpot虚拟机的垃圾收集器"></p>
+<h3 id="Serial-Serial-Old收集器"><a href="#Serial-Serial-Old收集器" class="headerlink" title="Serial/Serial Old收集器"></a>Serial/Serial Old收集器</h3><p>最简单的单线程垃圾回收器，新生代使用Serial，采用复制算法；老年代使用Serial Old，采用标记-整理算法。好处是simple is the best，坏处是并行度不够，且stop the world时间很长。一般用在client模式下。</p>
+<p><img src="/images/jvm_serial.png" alt="Serial收集器"></p>
+<h3 id="ParNew收集器"><a href="#ParNew收集器" class="headerlink" title="ParNew收集器"></a>ParNew收集器</h3><p>简单来说就是Serial的多线程版本。由于CMS只能和Serial和ParNew配合使用，故ParNew也是Server模式下首选的新生代收集器。</p>
+<h3 id="Parallel-Scavenge-Parallel-Old收集器"><a href="#Parallel-Scavenge-Parallel-Old收集器" class="headerlink" title="Parallel Scavenge/Parallel Old收集器"></a>Parallel Scavenge/Parallel Old收集器</h3><p>看介绍和ParNew差不多，但更关注吞吐量，即尽可能降低GC总时间。相对应的Parallel Old可以认为是Parallel Scavenge的老年代版本，两者可以配合使用，适用于吞吐量敏感的场合（比如离线任务）</p>
+<h3 id="CMS收集器"><a href="#CMS收集器" class="headerlink" title="CMS收集器"></a>CMS收集器</h3><p>CMS（Concurrent Mark Sweep）收集器的目标是降低GC停顿，适用于重视响应时间的服务。CMS基于mark-sweep算法，想法也很简单：很多时候stop-the-world是为了避免引用变更，但毕竟不是所有引用在GC期间都会改，所以如果能侦测到哪些引用没变且没被引用，就可以和其他用户线程同步进行回收。CMS步骤分为以下4步：</p>
+<ol>
+<li>初始标记（CMS initial mark）</li>
+<li>并发标记（CMS concurrent mark）</li>
+<li>重新标记（CMS remark）</li>
+<li>并发清除（CMS concurrent sweep）</li>
+</ol>
+<p>其中1和3还是需要stop-the-world，而耗时最长的2和4可以和用户线程并发执行，显然GC停顿时间变短了。 </p>
+<p><img src="/images/jvm_cms.png" alt="CMS执行流程"></p>
+<p>当然CMS也有缺点，</p>
+<ol>
+<li>对CPU资源敏感，因为和用户线程并发执行会占用一部分CPU资源，导致用户程序执行变慢</li>
+<li>无法处理浮动垃圾（floating garbage），由于和用户线程并发执行，在此期间产生的垃圾无法被检测和回收，导致CMS不能等到老年代几乎完全被填满了再进行收集，需要预留一部分。当CMS运行期间内存不足，会报“concurrent mode failure”，此时JVM会临时采用Serial Old来进行回收，触发full GC，导致响应时间变长</li>
+<li>CMS基于mark-sweep，会导致大量内存碎片，对此可以选择在CMS执行几次不压缩的full GC后，执行一次带压缩的full GC。压缩的full GC过程无法和用户线程并发执行。</li>
+</ol>
+<h3 id="G1收集器"><a href="#G1收集器" class="headerlink" title="G1收集器"></a>G1收集器</h3><p>G1（Garbage first）的基本思想是把内存预先划分成若干大小的region，在每个region独立执行GC，这样有几个好处：</p>
+<ol>
+<li>可以和用户线程并发执行</li>
+<li>可以分代回收</li>
+<li>内存碎片较少</li>
+<li>停顿可预测</li>
+</ol>
+<p><img src="/images/jvm_g1_memory.png" alt="G1收集器的内存分布"></p>
+<p>那么如何判断一个region的object是否被其他region引用？G1采用了Remembered Set来避免全堆扫描，每个region都配一个对应的remembered set，当JVM发现应用程序对reference类型进行写操作时，会产生一个write barrier暂时中断写操作，检查reference引用的对象是否在其他region，如果是的话就通过CardTable把相关引用信息记录到被引用对象所属的region的remembered set中，这样在扫region的时候可以避免全堆扫描。</p>
+<p>更详细的可以参考<a href="https://blog.csdn.net/coderlius/article/details/79272773" target="_blank" rel="noopener">详解 JVM Garbage First(G1) 垃圾收集器</a></p>
+<h2 id="内存分配和回收策略"><a href="#内存分配和回收策略" class="headerlink" title="内存分配和回收策略"></a>内存分配和回收策略</h2><h3 id="对象优先在eden分配"><a href="#对象优先在eden分配" class="headerlink" title="对象优先在eden分配"></a>对象优先在eden分配</h3><p>对象优先在eden分配，如果eden区不足，则会触发一次minor GC。</p>
+<ul>
+<li>Minor GC是新生代GC，指发生在新生代的垃圾收集动作，minor GC发生的比较频繁，且回收速度也比较快</li>
+<li>Full GC（Major GC）指发生在老年代的GC。Full GC的速度一般比Minor GC慢10倍以上</li>
+</ul>
+<h3 id="大对象直接进老年代"><a href="#大对象直接进老年代" class="headerlink" title="大对象直接进老年代"></a>大对象直接进老年代</h3><p>比如byte[]数组。一般假定大对象的存活时间会比较长。分配连续的大内存可能会不成功，提前触发GC，应当尽量避免存活时间短的大对象。</p>
+<h3 id="长期存活的对象进入老年代"><a href="#长期存活的对象进入老年代" class="headerlink" title="长期存活的对象进入老年代"></a>长期存活的对象进入老年代</h3><p>JVM中每个对象有一个age计数器，对象每经过一次minor GC，age加1，超过一定年龄后（比如15）就扔到老年代。</p>
+<h3 id="动态对象年龄判定"><a href="#动态对象年龄判定" class="headerlink" title="动态对象年龄判定"></a>动态对象年龄判定</h3><p>不一定非要等到MaxTenuringThreshold才升级到老年代，如果survivor区相同年龄所有对象大小的总和超过survivor空间的一半，那么大于等于这个年龄的object也可以进入老年代</p>
+<h3 id="空间分配担保"><a href="#空间分配担保" class="headerlink" title="空间分配担保"></a>空间分配担保</h3><p>发生minor GC前，JVM会检查老年代最大可用的连续空间是否大于新生代所有对象总空间，成立的化minor GC就是安全的，否则会查看HandelPromotionFailure是否设置，如果设置的话会继续检查老年代最大可用的连续空间是否大于历次晋升到老年代的平均大小，如果大于，会尝试一次有风险的minor GC；如果小于，或者HandelPromotionFailure未设置，则进行full GC。</p>
+<p>所谓的风险是指survivor区可能无法容纳所有幸存object，会扔到老年代，而老年代如果也放不下，minor GC自然就失败了。</p>
+<p>感觉这一章内容还没完全看懂，以后再详细了解一下。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/26/megastore/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -393,11 +573,19 @@
                 
               
 
-              <time title="Created: 2019-08-23 00:00:03 / Modified: 17:06:37" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:03+08:00">2019-08-23</time>
+              <time title="Created: 2019-08-23 00:00:03" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:03+08:00">2019-08-23</time>
             </span>
           
             
 
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-08-31 18:25:13" itemprop="dateModified" datetime="2019-08-31T18:25:13+08:00">2019-08-31</time>
+              </span>
             
           
 
@@ -456,6 +644,9 @@
 <p>重点是对象头，分为两部分。第一部分为标记字段（Mark Word），其长度为32/64 bits，和JVM有关，所保存的数据含义根据object状态不同而不同，比如在下图unlocked non-biasale object的32位中，前25bit表示该object的hash code，4bit保存分代年龄，1bit固定为0,后两位存储锁标志位。</p>
 <p>第二部分为类型指针（Klass Pointer），用以确定这个实例来自哪个类。但如果JVM实现时可以通过别的方式查找到所属类，那么也可以没有这个字段。</p>
 <p>另外如果是数组，还需要一个字段记录数组长度。</p>
+<h3 id="对象的访问定位"><a href="#对象的访问定位" class="headerlink" title="对象的访问定位"></a>对象的访问定位</h3><p>如何定位对象的address取决于我们使用的是句柄还是直接指针。句柄的话就得先访问句柄再访问内存，直接指针可以直接访问内存。不过句柄的好处是GC的时候不用改太多东西。HotSpot用第二种方式。</p>
+<p><img src="/images/jvm_visit_by_handle.png" alt="通过句柄访问对象"></p>
+<p><img src="/images/jvm_visit_by_pointer.png" alt="通过指针访问对象"></p>
 
         
       
@@ -663,7 +854,7 @@
   
   
   <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/linux-cmd-nc/">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="name" content="maxiaoxin">
@@ -677,7 +868,7 @@
       <header class="post-header">
         <h1 class="post-title" itemprop="name headline">
             
-            <a href="/2019/08/23/linux-cmd-nc/" class="post-title-link" itemprop="url">linux传输命令</a>
+            <a href="/2019/08/23/jni/" class="post-title-link" itemprop="url">JNI使用中的一些注意事项</a>
           
         </h1>
 
@@ -692,7 +883,7 @@
                 
               
 
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:43:15" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:41:05" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
             </span>
           
             
@@ -711,7 +902,42 @@
     <div class="post-body" itemprop="articleBody">
 
       
-          <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nc -l -p 8210 &gt; demo.txt        <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写入文本文件</span></span><br><span class="line">nc -l -p 8210 &gt; demo.tar.bz2    <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写成压缩文件</span></span><br><span class="line">nc dest_ip 8210 &lt; demo.txt      <span class="comment"># 向ip为dest_ip的机器的8210端口发送demo.txt文件</span></span><br><span class="line">nc dest_ip 8210 &lt; $(tar -jcvf demo.tar.bz2 demo.txt) <span class="comment"># 压缩后发送</span></span><br></pre></td></tr></table></figure>
+          <p>很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。</p>
+<h3 id="内存模型和参数传递"><a href="#内存模型和参数传递" class="headerlink" title="内存模型和参数传递"></a>内存模型和参数传递</h3><p>比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直接用参数传过来。如果数据量比较大，或者不是基本类型，可能需要用byte[]传。如果数据量巨大，只能用文件等形式传递了。个人目前处理的文件一般是不超过20MB的小文件，因此选择第二种方式传递参数（虽然数据在heap区和native区来回复制也有一定代价），不过好在数据量不是很大，可以接受——另外一个使用byte[]而非DirectByteBuffer的重要原因是我还是有可能会用java代码来处理数据，而java处理DirectByteBuffer有时候很麻烦。。如果是非常大的文件（比如视频文件），使用临时文件/DirectBuffer更好一些。</p>
+<p>流数据的处理更复杂一些。现在似乎没有非常方便的在本地代码中读InputStream等的方法（当然可以做到，比如使用<code>GetMethodID&amp;Call??Method</code>等），但我没试过这种方式——即使不考虑效率因素，在本地代码中调用JAVA方法也不是一个好选择，毕竟本地代码处理JAVA运行中的各种异常实在太复杂了。最好还是将数据预处理后，交由本地代码处理，本地代码尽量保持简洁。</p>
+<p>当然最重要的还是保证内存不泄漏，本地代码中new/malloc自不必说，记得在最后调用DeleteLocalRef、ReleaseByteArrayElements等函数释放JAVA对象的引用。</p>
+<h3 id="加载动态库"><a href="#加载动态库" class="headerlink" title="加载动态库"></a>加载动态库</h3><p>我用的是org.scijava:native-lib-loader。本质上调用的还是System.load，这个库的做法是将动态库extract提取到一个临时文件，然后System.load()，不想引入新的库的话可以自己手动实现一下。</p>
+<h3 id="编译和调试"><a href="#编译和调试" class="headerlink" title="编译和调试"></a>编译和调试</h3><p>首先编译环境最好和目标运行环境一致，否则可能会出现各种意想不到的状况，比如系统库版本不兼容等。</p>
+<p>如果是自己重新写一个库可以规避掉很多问题。我遇到的情况通常是需要改写现有的库的接口，方便JAVA调用，那么至少需要</p>
+<ul>
+<li>修改源代码，暴露出可供调用的JNI外部函数</li>
+<li>改写MakeFile/CMakeLists，将原本的可执行文件编译为动态链接库</li>
+</ul>
+<p>只调试本地代码相对简单，但有些错误只有带JAVA调用时才会出现。我使用的IDE是CLion，暂时没找到比较方便的调试方法，目前的做法是加上DEBUG参数编译动态库后，</p>
+<ol>
+<li>在调用native方法前打个断点，运行至断点</li>
+<li>找到java进程的ID（ps，jps或者在程序里打印出来）</li>
+<li>CLion中Run - Attach to Local Process，选择对应的PID，在要调试的地方打断点</li>
+<li>继续java进程，进入本地代码中的断点，开始调试</li>
+</ol>
+<p>尽管GDB Remote Debug可以远程调试，但似乎不支持远程调试JNI？</p>
+<h3 id="代码编写时的注意事项"><a href="#代码编写时的注意事项" class="headerlink" title="代码编写时的注意事项"></a>代码编写时的注意事项</h3><ol>
+<li>很多库实现时只支持FILE<em>，改写为读内存很麻烦。这里推荐fmemopen和open_memstream，可以将数组转变为FILE</em>。</li>
+<li>很多C/C++代码逻辑中没有异常处理，我个人也不建议使用throw/catch。但JAVA中使用异常捕捉机制会方便很多，且有时候本地代码中遇到错误时也需要把异常信息传给java进程，那么在C/C++代码运行结束且发现运行出错时，手动抛出一个JAVA异常（调用(*env)-&gt;ThrowNew()），可能是一个比较好的风格。</li>
+</ol>
+<h3 id="线程安全"><a href="#线程安全" class="headerlink" title="线程安全"></a>线程安全</h3><p>有些库可能只支持单线程，或者可能最初设计的情景仅仅是程序运行，输入一个文件，处理，输出，程序结束：而内部实现可能是多线程。要处理多个文件，需要同时启动多个程序。</p>
+<p>如果简单的用JNI调用，很可能会在并行调用时产生冲突，因为这种库会有大量的全局/静态变量，而没有任何线程同步操作，甚至不可能同步。</p>
+<p>简单的处理方法是把JNI函数加锁，即同一时刻一个库暴露出的所有函数至多只有一个调用。复杂的处理方法就是自己手动改代码，把所有全局/静态变量统计出来放在一个struct里，调用时new一个，调用结束时delete掉。</p>
+<p>当然如果对库的了解比较深的话可以改写的更优雅一些；如果库本身很复杂，改造起来很麻烦，那就直接加锁吧。</p>
+<h3 id="避免使用较高版本的glibc"><a href="#避免使用较高版本的glibc" class="headerlink" title="避免使用较高版本的glibc"></a>避免使用较高版本的glibc</h3><p>使用时发现由于线上机器的gilbc版本可能低于本地编译环境,而glibc升级非常麻烦且会引起一系列问题,所以尽量避免使用较高版本glibc提供的函数</p>
+<p>一种避免使用较高版本glibc的办法见(Linux程序兼容),适用于低版本glibc也有此函数的情况</p>
+<ul>
+<li>查看线上环境支持的glibc版本 <code>strings /lib64/libc.so.6 | grep GLIBC_</code></li>
+<li>查看编译出来的二进制库/程序引用的glibc版本,检查有无冲突,及冲突的glibc版本 <code>readelf -s $libname | grep -oP “GLIBC_[\d.]*” | sort | uniq</code></li>
+<li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
+<li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
+</ul>
+
         
       
     </div>
@@ -948,7 +1174,7 @@
   
   
   <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/linux-cmd-nc/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="name" content="maxiaoxin">
@@ -962,7 +1188,7 @@
       <header class="post-header">
         <h1 class="post-title" itemprop="name headline">
             
-            <a href="/2019/08/23/jni/" class="post-title-link" itemprop="url">JNI使用中的一些注意事项</a>
+            <a href="/2019/08/23/linux-cmd-nc/" class="post-title-link" itemprop="url">linux传输命令</a>
           
         </h1>
 
@@ -977,7 +1203,7 @@
                 
               
 
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:41:05" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:43:15" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
             </span>
           
             
@@ -996,42 +1222,7 @@
     <div class="post-body" itemprop="articleBody">
 
       
-          <p>很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。</p>
-<h3 id="内存模型和参数传递"><a href="#内存模型和参数传递" class="headerlink" title="内存模型和参数传递"></a>内存模型和参数传递</h3><p>比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直接用参数传过来。如果数据量比较大，或者不是基本类型，可能需要用byte[]传。如果数据量巨大，只能用文件等形式传递了。个人目前处理的文件一般是不超过20MB的小文件，因此选择第二种方式传递参数（虽然数据在heap区和native区来回复制也有一定代价），不过好在数据量不是很大，可以接受——另外一个使用byte[]而非DirectByteBuffer的重要原因是我还是有可能会用java代码来处理数据，而java处理DirectByteBuffer有时候很麻烦。。如果是非常大的文件（比如视频文件），使用临时文件/DirectBuffer更好一些。</p>
-<p>流数据的处理更复杂一些。现在似乎没有非常方便的在本地代码中读InputStream等的方法（当然可以做到，比如使用<code>GetMethodID&amp;Call??Method</code>等），但我没试过这种方式——即使不考虑效率因素，在本地代码中调用JAVA方法也不是一个好选择，毕竟本地代码处理JAVA运行中的各种异常实在太复杂了。最好还是将数据预处理后，交由本地代码处理，本地代码尽量保持简洁。</p>
-<p>当然最重要的还是保证内存不泄漏，本地代码中new/malloc自不必说，记得在最后调用DeleteLocalRef、ReleaseByteArrayElements等函数释放JAVA对象的引用。</p>
-<h3 id="加载动态库"><a href="#加载动态库" class="headerlink" title="加载动态库"></a>加载动态库</h3><p>我用的是org.scijava:native-lib-loader。本质上调用的还是System.load，这个库的做法是将动态库extract提取到一个临时文件，然后System.load()，不想引入新的库的话可以自己手动实现一下。</p>
-<h3 id="编译和调试"><a href="#编译和调试" class="headerlink" title="编译和调试"></a>编译和调试</h3><p>首先编译环境最好和目标运行环境一致，否则可能会出现各种意想不到的状况，比如系统库版本不兼容等。</p>
-<p>如果是自己重新写一个库可以规避掉很多问题。我遇到的情况通常是需要改写现有的库的接口，方便JAVA调用，那么至少需要</p>
-<ul>
-<li>修改源代码，暴露出可供调用的JNI外部函数</li>
-<li>改写MakeFile/CMakeLists，将原本的可执行文件编译为动态链接库</li>
-</ul>
-<p>只调试本地代码相对简单，但有些错误只有带JAVA调用时才会出现。我使用的IDE是CLion，暂时没找到比较方便的调试方法，目前的做法是加上DEBUG参数编译动态库后，</p>
-<ol>
-<li>在调用native方法前打个断点，运行至断点</li>
-<li>找到java进程的ID（ps，jps或者在程序里打印出来）</li>
-<li>CLion中Run - Attach to Local Process，选择对应的PID，在要调试的地方打断点</li>
-<li>继续java进程，进入本地代码中的断点，开始调试</li>
-</ol>
-<p>尽管GDB Remote Debug可以远程调试，但似乎不支持远程调试JNI？</p>
-<h3 id="代码编写时的注意事项"><a href="#代码编写时的注意事项" class="headerlink" title="代码编写时的注意事项"></a>代码编写时的注意事项</h3><ol>
-<li>很多库实现时只支持FILE<em>，改写为读内存很麻烦。这里推荐fmemopen和open_memstream，可以将数组转变为FILE</em>。</li>
-<li>很多C/C++代码逻辑中没有异常处理，我个人也不建议使用throw/catch。但JAVA中使用异常捕捉机制会方便很多，且有时候本地代码中遇到错误时也需要把异常信息传给java进程，那么在C/C++代码运行结束且发现运行出错时，手动抛出一个JAVA异常（调用(*env)-&gt;ThrowNew()），可能是一个比较好的风格。</li>
-</ol>
-<h3 id="线程安全"><a href="#线程安全" class="headerlink" title="线程安全"></a>线程安全</h3><p>有些库可能只支持单线程，或者可能最初设计的情景仅仅是程序运行，输入一个文件，处理，输出，程序结束：而内部实现可能是多线程。要处理多个文件，需要同时启动多个程序。</p>
-<p>如果简单的用JNI调用，很可能会在并行调用时产生冲突，因为这种库会有大量的全局/静态变量，而没有任何线程同步操作，甚至不可能同步。</p>
-<p>简单的处理方法是把JNI函数加锁，即同一时刻一个库暴露出的所有函数至多只有一个调用。复杂的处理方法就是自己手动改代码，把所有全局/静态变量统计出来放在一个struct里，调用时new一个，调用结束时delete掉。</p>
-<p>当然如果对库的了解比较深的话可以改写的更优雅一些；如果库本身很复杂，改造起来很麻烦，那就直接加锁吧。</p>
-<h3 id="避免使用较高版本的glibc"><a href="#避免使用较高版本的glibc" class="headerlink" title="避免使用较高版本的glibc"></a>避免使用较高版本的glibc</h3><p>使用时发现由于线上机器的gilbc版本可能低于本地编译环境,而glibc升级非常麻烦且会引起一系列问题,所以尽量避免使用较高版本glibc提供的函数</p>
-<p>一种避免使用较高版本glibc的办法见(Linux程序兼容),适用于低版本glibc也有此函数的情况</p>
-<ul>
-<li>查看线上环境支持的glibc版本 <code>strings /lib64/libc.so.6 | grep GLIBC_</code></li>
-<li>查看编译出来的二进制库/程序引用的glibc版本,检查有无冲突,及冲突的glibc版本 <code>readelf -s $libname | grep -oP “GLIBC_[\d.]*” | sort | uniq</code></li>
-<li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
-<li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
-</ul>
-
+          <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nc -l -p 8210 &gt; demo.txt        <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写入文本文件</span></span><br><span class="line">nc -l -p 8210 &gt; demo.tar.bz2    <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写成压缩文件</span></span><br><span class="line">nc dest_ip 8210 &lt; demo.txt      <span class="comment"># 向ip为dest_ip的机器的8210端口发送demo.txt文件</span></span><br><span class="line">nc dest_ip 8210 &lt; $(tar -jcvf demo.tar.bz2 demo.txt) <span class="comment"># 压缩后发送</span></span><br></pre></td></tr></table></figure>
         
       
     </div>
@@ -1174,7 +1365,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">9</span>
+          <span class="site-state-item-count">10</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1209,7 +1400,9 @@
         
           
         
-        <span class="site-state-item-count">12</span>
+          
+        
+        <span class="site-state-item-count">13</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
