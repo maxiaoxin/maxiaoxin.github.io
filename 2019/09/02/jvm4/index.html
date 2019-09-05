@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="为了实现“Write Once, Run Anywhere”，JVM支持运行.class格式的字节码文件，这样可以保证JVM的平台无关性和语言无关性：即不管什么语言，只要能编译为符合规范的.class文件，就可以在JVM上运行。 class类文件结构任何一个class文件都对应着唯一一个类或接口的定义信息。当然一来JVM可以动态生成class，不一定每个类都对应着一个.class文件；二来一个ja">
+<meta name="keywords" content="JVM,.class">
+<meta property="og:type" content="article">
+<meta property="og:title" content="JVM学习（4）类文件结构">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/09/02/jvm4/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="为了实现“Write Once, Run Anywhere”，JVM支持运行.class格式的字节码文件，这样可以保证JVM的平台无关性和语言无关性：即不管什么语言，只要能编译为符合规范的.class文件，就可以在JVM上运行。 class类文件结构任何一个class文件都对应着唯一一个类或接口的定义信息。当然一来JVM可以动态生成class，不一定每个类都对应着一个.class文件；二来一个ja">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-09-05T10:24:17.788Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="JVM学习（4）类文件结构">
+<meta name="twitter:description" content="为了实现“Write Once, Run Anywhere”，JVM支持运行.class格式的字节码文件，这样可以保证JVM的平台无关性和语言无关性：即不管什么语言，只要能编译为符合规范的.class文件，就可以在JVM上运行。 class类文件结构任何一个class文件都对应着唯一一个类或接口的定义信息。当然一来JVM可以动态生成class，不一定每个类都对应着一个.class文件；二来一个ja">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/09/02/jvm4/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>JVM学习（4）类文件结构 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/02/jvm4/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">JVM学习（4）类文件结构
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-02 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-02T00:00:00+08:00">2019-09-02</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-05 18:24:17" itemprop="dateModified" datetime="2019-09-05T18:24:17+08:00">2019-09-05</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>为了实现“Write Once, Run Anywhere”，JVM支持运行.class格式的字节码文件，这样可以保证JVM的平台无关性和语言无关性：即不管什么语言，只要能编译为符合规范的.class文件，就可以在JVM上运行。</p>
+<h2 id="class类文件结构"><a href="#class类文件结构" class="headerlink" title="class类文件结构"></a>class类文件结构</h2><p>任何一个class文件都对应着唯一一个类或接口的定义信息。当然一来JVM可以动态生成class，不一定每个类都对应着一个.class文件；二来一个java源代码里可以定义多个类，每个类（包括子类）实际上都会生成一个.class文件。</p>
+<p>一个典型的class文件分为：MagicNumber，Version，Constant_pool，Access_flag，This_class，Super_class，Interfaces，Fields，Methods 和Attributes这十个部分：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th align="center">名称</th>
+<th align="center">数量</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>u4</td>
+<td align="center">magic</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">minor_version</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">major</td>
+<td align="center">_version</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">constant_pool_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>cp_info</td>
+<td align="center">constant_pool</td>
+<td align="center">constant_pool_count-1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">access_flags</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">this_class</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">super_class</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">interfaces_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">interfaces</td>
+<td align="center">interfaces_count</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">fields_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>field_info</td>
+<td align="center">fields</td>
+<td align="center">fields_count</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">methods_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>method_info</td>
+<td align="center">methods</td>
+<td align="center">methods_count</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">attributes_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>attribute_info</td>
+<td align="center">attributes</td>
+<td align="center">attributes_count</td>
+</tr>
+</tbody></table>
+<p>其中u1, u2, u4,u8分别表示1、2、4、8字节长度的标量，且以big-endian的方式保存。</p>
+<p>不定长的区域，比如constant_pool，method_info等，基本都是count+info[count]这种形式。</p>
+<p>先写一个示例代码：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> java.io.Serializable;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Serializable</span> </span>&#123;</span><br><span class="line">  <span class="keyword">protected</span> <span class="keyword">int</span> hello1;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello1</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello1;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">Child</span> <span class="keyword">extends</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Comparable</span>&lt;<span class="title">Child</span>&gt;</span>&#123;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="keyword">long</span> serialVersionUID = -<span class="number">3911120229867216339L</span>;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">transient</span> <span class="keyword">int</span> hello2;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">setHello2</span><span class="params">(<span class="keyword">int</span> hello2)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">this</span>.hello2 = hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello2</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">compareTo</span><span class="params">(Child o)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">this</span>.hello2 - o.hello2;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>注意这段代码编译后生成两个class文件，这里只分析<a href="/files/Child.class">Child.class</a>。可以先用<code>javap -v -p -s -sysinfo -constants Child</code>看一下基本框架。然后依次分析每个区域。</p>
+<h2 id="Magic-Numbers和版本号"><a href="#Magic-Numbers和版本号" class="headerlink" title="Magic Numbers和版本号"></a>Magic Numbers和版本号</h2><p>魔数，.class文件必须以0xcafebabe开头，这个跟.jpeg之类的文件类似。</p>
+<p>接下来4个字节是版本号，其中后两个字节是主版本号，这里是0x0031，对应JDK1.5.0_11版本。一般高版本的JVM兼容低版本的.class文件，但反过来不行。</p>
+<h2 id="常量池"><a href="#常量池" class="headerlink" title="常量池"></a>常量池</h2><p>接下来是常量池（constant pool）部分，2字节的数字表示一共有多少个常量，接下来一共有constant_pool_count-1个实际常量。这里一共有0x002a-1=42-1=41个常量。且常量池索引以1开始，0被用来表示“不引用任何一个常量池项目”。</p>
+<p>常量池主要包含两部分：字面量（literal）和符号引用（symbolic references）。字面量比如文本字符串、声明为final的常量值等。符号引用包含三部分：</p>
+<ul>
+<li>类和接口的全限定名（full qualified name）</li>
+<li>字段的名称和描述符（descriptor）</li>
+<li>方法的名称和描述符</li>
+</ul>
+<p>每个常量以1字节的类型描述开始，然后按这个类型定义的表去填充数据，具体参考<a href="https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html" target="_blank" rel="noopener">The class File Format</a>。以刚才编译好的.class文件为例，跳过重复的类型，大概有以下几个部分：</p>
+<ul>
+<li>第1个常量是<code>0a 0006 0023</code>，对应CONSTANT_Methodref_info，两个index分别指向第6和第35个常量，表明这个方法在第6个常量表示的类（Base），具体的名称和描述符参考第35个常量（<code>&quot;&lt;init&gt;&quot;:()V</code>）</li>
+<li>第2个常量是<code>09 0004 0024</code>，对应CONSTANT_Fieldref_info，与CONSTANT_Methodref_info类似，表明这个字段在第4个常量表示的类（Child），具体的名称和描述符参考第36个常量（<code>hello2:I</code>）</li>
+<li>第4个常量是<code>07 0026</code>，对应CONSTANT_Class_info，这个类的名称指向第38个常量，这个常量是个字符串，值为<code>Child</code></li>
+<li>第8个常量是<code>01 0010 73657269616c56657273696f6e554944</code>，对应CONSTANT_Utf8_info，是一个utf8字符串，此字符串长为16（32字节），用python3的<code>bytes.fromhex(&quot;73657269616c56657273696f6e554944&quot;)</code>解码得到字符串是<code>serialVersionUID</code></li>
+<li>第11个常量是<code>05 c9b8e8df78eba22d</code>，对应CONSTANT_Long_info，是一个long型常量，对应十进制数字为<code>-3911120229867216339</code></li>
+<li>第35个常量是<code>0c 000f 0010</code>，对应CONSTANT_NameAndType_info，表示它的名字为第15个常量（<code>&lt;init&gt;</code>），类型为第16个常量<code>()V</code></li>
+</ul>
+<p>总的来说常量池还是以字符串、数字为主。</p>
+<h2 id="访问标志"><a href="#访问标志" class="headerlink" title="访问标志"></a>访问标志</h2><p>常量池结束后是两个字节的访问标志，用以声明这个类/接口/注解…的访问类型。这个类是0x0021，为<code>ACC_PUBLIC|ACC_SUPER</code>，ACC_PUBLIC容易理解，即这个类声明为public的；而ACC_SUPER主要是为了向下兼容，因为invokespecial这个指令的语义在JDK1.0.2发生过变化（可以参考<a href="https://blog.csdn.net/xinaij/article/details/38872851" target="_blank" rel="noopener">ACC_SUPER和早期的invokespecial</a>），那么新版JDK编译出来的类都需要带上这个flag。</p>
+<h2 id="类索引、父类索引和接口索引集合"><a href="#类索引、父类索引和接口索引集合" class="headerlink" title="类索引、父类索引和接口索引集合"></a>类索引、父类索引和接口索引集合</h2><p>还是指向常量池的信息，这里类是第4个常量（Child类），父类是第6个常量（Base类）。由于所有java class都至少有个一个基类Object，故父类索引一定不为0。</p>
+<p>这个类的接口集合大小为1，之后是一系列2字节的常量索引（长度为1），可以看到Child类继承了7号常量描述的接口（java/lang/Comparable）。</p>
+<h2 id="字段表集合"><a href="#字段表集合" class="headerlink" title="字段表集合"></a>字段表集合</h2><p>相比于接口，字段包含的信息比较多，除了名字和类型外，还包含诸如是否被static、final、public、volatile等修饰符修饰等信息。因此一个字段被定义为</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">field_info &#123;</span><br><span class="line">  u2 access_flags;</span><br><span class="line">  u2 name_index;</span><br><span class="line">  u2 descriptor_index;</span><br><span class="line">  u2 attributes_count;</span><br><span class="line">  attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里一共有2个字段，第一个字段为<code>001A 0008 0009 0001 000A 00000002 000B</code>，被声明为<code>0x1A=ACC_PRIVATE|ACC_STATIC|ACC_FINAL</code>，名称为第8个常量（字符串<code>serialVersionUID</code>），描述符为第9个常量（字符串<code>J</code>，表示基本类型long）。</p>
+<p>所谓描述符(descriptor)是描述字段的数据类型、方法的参数列表（包括数量、类型、顺序）和返回值。基本类型和void都用一个大写字母表示，而对象用L+对象的全限定名来表示，比如<code>Ljava/lang/Object;</code>（一般全限定名后加个分号以示区分）。数组则是加个<code>[</code>，比如<code>[[Ljava/lang/String;</code>表示<code>String[][]</code>这样的二位数组，<code>[I</code>表示<code>int[]</code>这样的int数组。描述方法时，先写参数列表，后写返回值。例如方法<code>int indexOf(char[] source, int sourceOffset, char[] target, int targetOffset, int targetCount, int from Index)</code>的描述符为<code>([CII[CIII]])I</code>。</p>
+<p>最后，这个字段包含1个属性（attribute），属性用来保存一些额外信息，每个attribute_info被定义为</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">attribute_info &#123;</span><br><span class="line">     u2 attribute_name_index;</span><br><span class="line">     u4 attribute_length;</span><br><span class="line">     u1 info[attribute_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以看到这个字段有一个attribute_info，name为第10个常量<code>ConstantValue</code>，其内容长为2字节，但需要联合起来表示指向第11个常量(一个long型的数字-3911120229867216339l)。</p>
+<p>第二个字段为<code>0082 000D 000E 0000</code>，被声明为<code>0x82=ACC_PRIVATE|ACC_TRANSIENT</code>，名称为第13个常量<code>hello2</code>，描述符为第14个常量<code>I</code>，没有额外属性。</p>
+<h2 id="方法表集合"><a href="#方法表集合" class="headerlink" title="方法表集合"></a>方法表集合</h2><p>方法表和字段表结构很类似，不过由于字段和方法的访问标志不太一样，所以实际含义不太一样。此外方法表一般会有一个属性指向Code类型，需要参考属性集合表。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">method_info &#123;</span><br><span class="line">     u2 access_flags;</span><br><span class="line">     u2 name_index;</span><br><span class="line">     u2 descriptor_index;</span><br><span class="line">     u2 attributes_count;</span><br><span class="line">     attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>Child里有6个方法，如下表所示，其中bridge表示这个方法是桥接方法，synthetic表示这个方法由编译器生成。</p>
+<table>
+<thead>
+<tr>
+<th>二进制码</th>
+<th>方法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0001 000f 0010 0001 0011 0000002f...</code></td>
+<td><code>public &lt;init&gt; ()V</code></td>
+</tr>
+<tr>
+<td><code>0001 0016 0017 0001 0011 0000003e...</code></td>
+<td><code>public setHello2 (I)V</code></td>
+</tr>
+<tr>
+<td><code>0001 0018 0019 0001 0011 0000002f...</code></td>
+<td><code>public getHello2 ()I</code></td>
+</tr>
+<tr>
+<td><code>0001 001a 001b 0001 0011 0000003e...</code></td>
+<td><code>public compareTo (LChild;)I</code></td>
+</tr>
+<tr>
+<td><code>1041 001d 0019 0001 0011 0000002f...</code></td>
+<td><code>public bridge synthetic getHello1 ()I</code></td>
+</tr>
+<tr>
+<td><code>1041 001a 001e 0001 0011 00000033...</code></td>
+<td><code>public bridge synthetic compareTo (Ljava/lang/Object;)I</code></td>
+</tr>
+</tbody></table>
+<p>JSL对<a href="https://docs.oracle.com/javase/tutorial/java/generics/bridgeMethods.html" target="_blank" rel="noopener">bridge method</a>的定义为：</p>
+<blockquote>
+<p>When compiling a class or interface that extends a parameterized class or implements a parameterized interface, the compiler may need to create a synthetic method, called a bridge method, as part of the type erasure process. You normally don’t need to worry about bridge methods, but you might be puzzled if one appears in a stack trace.</p>
+</blockquote>
+<p>比较奇怪的是<code>getHello1</code>也生成了一个桥接方法，我在网上查到的说法是只有类型擦除的时候才会生成bridge method，但实际上我试下来只要Child继承了Base，无论是否继承了Comparable，都会生成一个bridge的<code>getHello1()</code>。看了下反编译后的字节码，似乎bridge方法都会invokespecial/invokevirtual另一个方法，也就是说会把具体实现代理到其他方法去。</p>
+<h2 id="属性表集合"><a href="#属性表集合" class="headerlink" title="属性表集合"></a>属性表集合</h2><p>可以看出，每个方法都有一个Code类型的属性，实际上的字节码也保存在这个属性里。之前也提到过一个ConstantValue属性。JVM对属性的规定比较宽泛，也允许编译器向属性表写入自己定义的属性信息。这里只记录一些常见的属性。</p>
+<h3 id="Code属性"><a href="#Code属性" class="headerlink" title="Code属性"></a>Code属性</h3><p>完整的Code_attribute定义如下，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">Code_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 max_stack;</span><br><span class="line">    u2 max_locals;</span><br><span class="line">    u4 code_length;</span><br><span class="line">    u1 code[code_length];</span><br><span class="line">    u2 exception_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 end_pc;</span><br><span class="line">        u2 handler_pc;</span><br><span class="line">        u2 catch_type;</span><br><span class="line">    &#125; exception_table[exception_table_length];</span><br><span class="line">    u2 attributes_count;</span><br><span class="line">    attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>以上一节中的<code>compareTo (LChild;)I</code>方法为例，其完整二进制代码如下：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">0011 0000003e 0002 0002 0000000a </span><br><span class="line">2a b4 00 02 2b b4 00 02 64 ac </span><br><span class="line">0000 </span><br><span class="line">0002</span><br><span class="line">0012 00000006 0001 0000 0019 </span><br><span class="line">0013 00000016 0002 0000 000a 0014 0015 0000 0000 000a 001c 0015 0001</span><br></pre></td></tr></table></figure>
+
+<p>可以看出，这个方法允许的最大操作数栈的最大深度为2，允许最多2个局部变量（包括形参）：max_locals参数的单位是slot，对于小于双字节的类型（如byte,char…）需要1个slot，而对double和long则需要2个slot。方法参数包括this，所以这个方法实际上参数是2。代码长度为10（<code>2a b4 00 02 2b b4 00 02 64 ac</code>），分别表示：</p>
+<table>
+<thead>
+<tr>
+<th>字节码</th>
+<th>指令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>2a</td>
+<td><code>aload_0</code></td>
+<td>将第一个引用类型本地变量推送至栈顶</td>
+</tr>
+<tr>
+<td>b4 0002</td>
+<td><code>getfield</code></td>
+<td>获取指定类的实例域, 并将其压入栈顶。这里操作数为0x0002，查询常量池可知要把Child.hello2压栈</td>
+</tr>
+<tr>
+<td>2b</td>
+<td><code>aload_1</code></td>
+<td>将第二个引用类型本地变量推送至栈顶</td>
+</tr>
+<tr>
+<td>b4 0002</td>
+<td><code>getfield</code></td>
+<td>获取指定类的实例域, 并将其压入栈顶</td>
+</tr>
+<tr>
+<td>64</td>
+<td><code>isub</code></td>
+<td>将栈顶两int型数值相减并将结果压入栈顶</td>
+</tr>
+<tr>
+<td>ac</td>
+<td><code>ireturn</code></td>
+<td>从当前方法返回int</td>
+</tr>
+</tbody></table>
+<p>之后exception_table为空，有两个额外属性，分别是<code>LineNumberTable</code>和<code>LocalVariableTable</code>。</p>
+<h3 id="LineNumberTable属性"><a href="#LineNumberTable属性" class="headerlink" title="LineNumberTable属性"></a>LineNumberTable属性</h3><p>用于描述java源代码行号和字节码行号之间的对应关系，定义如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">LineNumberTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 line_number_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 line_number;	</span><br><span class="line">    &#125; line_number_table[line_number_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>所以这段代码偏移量为0的代码对应源代码的第25行，且只有一行代码。</p>
+<h3 id="LocalVariableTable属性"><a href="#LocalVariableTable属性" class="headerlink" title="LocalVariableTable属性"></a>LocalVariableTable属性</h3><p>非必须属性，用来记录每个变量的名字，方便别人调用。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">LocalVariableTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 local_variable_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 length;</span><br><span class="line">        u2 name_index;</span><br><span class="line">        u2 descriptor_index;</span><br><span class="line">        u2 index;</span><br><span class="line">    &#125; local_variable_table[local_variable_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这段代码一共记录了两个变量名，分别是<code>this</code>和<code>o</code>，对应两个形参名。</p>
+<p>此外Child类中还有SourceFile、Signature属性，这里就不多说了。</p>
+<p>Child类基本就分析到这了，实际上少分析了几个比较重要的分析，比如执行过程中的异常处理流程、异常抛出列表等、引导方法（BootstrapMethods）、各种字节码指令（特别是异常指令和同步指令）等，之后再补充。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/JVM/" rel="tag"># JVM</a>
+            
+              <a href="/tags/class/" rel="tag"># .class</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/08/30/jvm3/" rel="next" title="JVM学习（3）垃圾回收器和内存分配策略">
+                  <i class="fa fa-chevron-left"></i> JVM学习（3）垃圾回收器和内存分配策略
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#class类文件结构"><span class="nav-number">1.</span> <span class="nav-text">class类文件结构</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Magic-Numbers和版本号"><span class="nav-number">2.</span> <span class="nav-text">Magic Numbers和版本号</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#常量池"><span class="nav-number">3.</span> <span class="nav-text">常量池</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#访问标志"><span class="nav-number">4.</span> <span class="nav-text">访问标志</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#类索引、父类索引和接口索引集合"><span class="nav-number">5.</span> <span class="nav-text">类索引、父类索引和接口索引集合</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#字段表集合"><span class="nav-number">6.</span> <span class="nav-text">字段表集合</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#方法表集合"><span class="nav-number">7.</span> <span class="nav-text">方法表集合</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#属性表集合"><span class="nav-number">8.</span> <span class="nav-text">属性表集合</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Code属性"><span class="nav-number">8.1.</span> <span class="nav-text">Code属性</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#LineNumberTable属性"><span class="nav-number">8.2.</span> <span class="nav-text">LineNumberTable属性</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#LocalVariableTable属性"><span class="nav-number">8.3.</span> <span class="nav-text">LocalVariableTable属性</span></a></li></ol></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">11</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">14</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
