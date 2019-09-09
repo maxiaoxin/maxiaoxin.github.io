@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="有了.class文件后，还需要一系列步骤加载进JVM才能运行。简单来说，一个类从被加载至JVM，到卸载出内存为止，整个生命周期包括加载（loading）、验证（verification）、准备（preparation）、解析（resolution）、初始化（initialization）、使用（using）、卸载（unloading）7个阶段。其中验证、准备、解析三个部分称为连接（linking）">
+<meta name="keywords" content="JVM,ClassLoader">
+<meta property="og:type" content="article">
+<meta property="og:title" content="JVM学习（5）类加载机制">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/09/06/jvm5/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="有了.class文件后，还需要一系列步骤加载进JVM才能运行。简单来说，一个类从被加载至JVM，到卸载出内存为止，整个生命周期包括加载（loading）、验证（verification）、准备（preparation）、解析（resolution）、初始化（initialization）、使用（using）、卸载（unloading）7个阶段。其中验证、准备、解析三个部分称为连接（linking）">
+<meta property="og:locale" content="cn">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/jvm_class_lifecycle.png">
+<meta property="og:updated_time" content="2019-09-09T08:11:25.889Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="JVM学习（5）类加载机制">
+<meta name="twitter:description" content="有了.class文件后，还需要一系列步骤加载进JVM才能运行。简单来说，一个类从被加载至JVM，到卸载出内存为止，整个生命周期包括加载（loading）、验证（verification）、准备（preparation）、解析（resolution）、初始化（initialization）、使用（using）、卸载（unloading）7个阶段。其中验证、准备、解析三个部分称为连接（linking）">
+<meta name="twitter:image" content="https://maxiaoxin.github.io/images/jvm_class_lifecycle.png">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/09/06/jvm5/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>JVM学习（5）类加载机制 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/06/jvm5/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">JVM学习（5）类加载机制
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-06 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-06T00:00:00+08:00">2019-09-06</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-09 16:11:25" itemprop="dateModified" datetime="2019-09-09T16:11:25+08:00">2019-09-09</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>有了.class文件后，还需要一系列步骤加载进JVM才能运行。简单来说，一个类从被加载至JVM，到卸载出内存为止，整个生命周期包括加载（loading）、验证（verification）、准备（preparation）、解析（resolution）、初始化（initialization）、使用（using）、卸载（unloading）7个阶段。其中验证、准备、解析三个部分称为连接（linking），顺序如下图所示。</p>
+<p><img src="/images/jvm_class_lifecycle.png" alt="类的生命周期"></p>
+<p>JVM没有规定什么时候开始加载，但规定了5种情况必须对类进行初始化：</p>
+<ol>
+<li>遇到<code>new、getstatic、putstatic、invokestatic</code>这四条指令码。比如new一个对象、读取或设置一个类的静态字段（被final修饰、已在编译期把结果放入常量池的静态字段除外）、调用一个类的静态方法的时候。</li>
+<li>使用<code>java.lang.reflect</code>包的方法对类进行反射调用时</li>
+<li>初始化一个类时，需要先初始化其父类</li>
+<li>虚拟机启动时，用户指定的主类需要先被初始化</li>
+<li>使用JDK1.7的动态语言支持时，如果一个<code>java.lang.invoke.MethodHandle</code>实例最后的解析结果<code>REF_getStatic、REF_putStatic、REF_invokeStatic</code>的方法句柄对应的类需要初始化</li>
+</ol>
+<p>这五种场景中的行为称为对一个类的主动引用，除此之外的引用类的方式都不会触发初始化，称为被动引用，比如</p>
+<ol>
+<li>通过子类引用父类的静态字段，不会触发子类的初始化</li>
+<li>通过数组定义来引用类，不会触发此类的初始化（如<code>SomeClass[] arr= new SomeClass[];</code>）</li>
+<li>引用某个类的静态常量</li>
+</ol>
+<p>其中2虽然不会导致这个类的初始化，但会触发一个<code>[Lorg.fenixsoft.classloading.SomeClass</code>的类初始化，它由JVM自动生成、直接继承自<code>java.lang.Object</code>，由newarray触发，代表了一个元素类型为<code>org.fenixsoft.classloading.SomeClass</code>的一维数组，数组中应有的属性和方法（如<code>length、clone</code>）都实现在这个类。Java中对数组的访问会使用这个类提供的方法（底层使用了<code>xaload、xastore</code>等指令保证不会越界），所以相对<code>C/C++</code>安全。</p>
+<p>此外，接口在初始化时不要求父接口全部完成初始化，只有在真正使用父接口的时候（如引用接口中定义的常量）才会初始化。并且接口也会生成<code>&lt;cinit&gt;</code>的类构造器，用于初始化接口中定义的成员变量。</p>
+<h2 id="加载（loading）"><a href="#加载（loading）" class="headerlink" title="加载（loading）"></a>加载（loading）</h2><p>加载阶段JVM需要做以下事情：</p>
+<ol>
+<li>通过一个类的全限定名来获取定义此类的二进制字节流</li>
+<li>将这个字节流所代表的静态存储结构转换为方法区的运行时数据结构</li>
+<li>在内存中生成一个代表这个类的java.lang.Class对象，作为方法区这个类的各种数据的访问入口</li>
+</ol>
+<p>常见的获取二进制字节流的方式有：</p>
+<ol>
+<li>从.class文件直接获得</li>
+<li>从zip包中获得，比如JAR,EAR,WAR</li>
+<li>从网络中获得，比如Applet</li>
+<li>运行时计算生成，比如动态代理，java.lang.reflect.Proxy就是用了ProxyGenerator.generateProxyClass来为特定接口生成形式为”$Proxy”的代理类的二进制字节流</li>
+<li>由其他文件生成，比如JSP</li>
+<li>从数据库中读取<br>…</li>
+</ol>
+<p>除了获得字节流的方式外，开发人员还可以自定义个一个ClassLoader去控制如何读取字节流。</p>
+<p>数组类比较特殊，它是由JVM直接创建的，一个数组类（简称为C）的创建过程需要遵循以下规则：</p>
+<ol>
+<li>如果数组的组件类型（Component Type，指数组去掉一个维度后的类型）是引用类型，则递归的加载这个组件类型，之后数组C将在这个组件类型所属的ClassLoader的类命名空间上被标志</li>
+<li>如果组件类型不是引用类型，则会标识与Bootstrap Classloader关联。</li>
+<li>数组类的可见性与它的组件的可见性保持一致，如果组件类型不是引用类型，则默认为public</li>
+</ol>
+<p>加载完成后，JVM外部的二进制字节流就按虚拟机所需的格式存储在方法区之中，方法区中的数据格式由JVM自行定义。然后在内存中实例化一个java.lang.Class对象（HotSpot将这个对象放在了方法区），这个对象将作为程序访问方法区中这些类型数据的外部接口。</p>
+<h2 id="验证（verification）"><a href="#验证（verification）" class="headerlink" title="验证（verification）"></a>验证（verification）</h2><p>简单来说就是确保这些二进制字节流格式符合JVM规范，且不会对JVM有危害。</p>
+<h3 id="文件格式验证"><a href="#文件格式验证" class="headerlink" title="文件格式验证"></a>文件格式验证</h3><p>检验其是否符合Class文件规范，且能被当前JVM兼容，包括</p>
+<ol>
+<li>以<code>0xcafebabe</code>开头</li>
+<li>主、次版本号能否被JVM兼容</li>
+<li>常量池中的常量是否有不被支持的类型（检查常量tag标志）</li>
+<li>指向常量的各种索引值中是否有指向不存在或不符合类型的常量</li>
+<li><code>CONSTANT_Utf8_info</code>类型的常量中是否有不符合UTF8编码的数据</li>
+<li>Class文件中各个部分及文件本身是否有被删除或附加的其他信息<br>…</li>
+</ol>
+<p>只有经过文件格式验证后的字节流才会保存到方法区，后面三个验证阶段全部基于方法区的数据，不会直接操作字节流</p>
+<h3 id="元数据验证"><a href="#元数据验证" class="headerlink" title="元数据验证"></a>元数据验证</h3><p>确保Class数据描述的语义符合java语言规范要求，包括</p>
+<ol>
+<li>这个类是否有父类（除了<code>java.lang.Object</code>都应该有父类）</li>
+<li>这个类是否继承了一个<code>final</code>类</li>
+<li>如果这个类不是<code>abstract</code>，那么是否实现了所有父类/接口中要求实现的方法</li>
+<li>类中的字段、方法是否与父类矛盾（如覆盖了父类的<code>final</code>字段、不符合规则的方法重载）<br>…</li>
+</ol>
+<h3 id="字节码验证"><a href="#字节码验证" class="headerlink" title="字节码验证"></a>字节码验证</h3><p>验证操作码，包括</p>
+<ol>
+<li>确保任意时刻操作数栈的数据类型和指令代码序列都能配合工作，例如不会出现按<code>long</code>去读一个<code>int</code></li>
+<li>确保跳转指令不会跳转到方法体以外的字节码上</li>
+<li>确保方法体中的类型转换是有效的<br>…</li>
+</ol>
+<p>JDK1.6后为<code>Code</code>属性的属性表引入了一个<code>StackMapTable</code>属性，描述了方法体中所有基本块开始时本地变量表和操作栈应有的状态，那么验证期间只要检查<code>StackMapTable</code>属性即可，不需要重新推导这部分信息。JDK1.7后要求主版本号超过50的只能用这种形式。</p>
+<p>（其实很奇怪，既然要验证就说明不信任代码提供方，那怎么能把一部分验证工作放在代码提供方呢？只能说JVM设计者认为代码提供方都是善意的，但工作做的比较糙，编译出来的东西不靠谱）</p>
+<h3 id="符号引用验证"><a href="#符号引用验证" class="headerlink" title="符号引用验证"></a>符号引用验证</h3><p>符号引用验证发生在解析之后，目的是检查对类自身以外（常量池中的各种符号引用）的信息进行匹配性校验，包括</p>
+<ol>
+<li>符号引用中的全限定名能否找到对应的类</li>
+<li>指定类中有无描述的方法和字段</li>
+<li>符号引用中的类、字段、方法的访问性（<code>private、protected、public、default</code>）是否可以被当前类访问<br>…</li>
+</ol>
+<p>验证过程可以用<code>-XVerify:none</code>来取消</p>
+<h2 id="准备（preparation）"><a href="#准备（preparation）" class="headerlink" title="准备（preparation）"></a>准备（preparation）</h2><p>准备阶段主要用来为类变量（被static修饰）分配内存（一般在方法区）并设置初始值，且初始值为0。比如<code>public static int value = 123;</code>这个变量在准备阶段过后的初始值为0，而在初始化后才被赋值为123。</p>
+<p>如果类字段的属性表包含<code>ConstantValue</code>属性，那么准备阶段就会把变量定义为所指定的值。</p>
+<h2 id="解析（resolution）"><a href="#解析（resolution）" class="headerlink" title="解析（resolution）"></a>解析（resolution）</h2><p>解析的目的是为了将常量池中的符号引用替换为直接引用的过程，</p>
+<ul>
+<li>符号引用（Symbolic References）：以一组符号来描述所引用的目标，符合可以是任何形式的字面量，只要在使用时能无歧义的定位到目标即可<ul>
+<li>符号引用与JVM实现的内存布局无关</li>
+<li>引用的目标不一定已被加载到内存</li>
+<li>各种JVM的内存布局可以各不相同，但能接受的符号引用必须都是一致的</li>
+</ul>
+</li>
+<li>直接引用（Direct References）：可以是直接指向目标的指针、相对偏移量或句柄<ul>
+<li>与JVM内部实现相关</li>
+<li>不同JVM的直接引用形式一般不同</li>
+<li>如果有直接引用，那么引用目标一定在内存</li>
+</ul>
+</li>
+</ul>
+<p>JVM规范没有规定解析阶段发生的具体时间，只要求在执行<code>anewarray, checkcast, getfield, getstatic, instanceof, invokedynamic, invokeinterface, invokespecial, invokestatic, invokevirtual, ldc, ldc_w, multianewarray, new, putfield, putstatic</code>这16个用于操作符号引用的字节码指令前，先对符号引用进行解析。所以JVM可以选择在加载的时候就解析还是在使用的时候才解析。JVM要求除<code>invokedynamic</code>外，在同一个实体中，如果一个符号引用被成功解析，那么之后也要能够成功解析；如果第一次解析失败，那么之后也应该收到同样的异常。而<code>invokedynamic</code>必须要等到实际执行时再解析，这条指令在JDK1.7中被引入，JDK1.8开始用来实现lambda表达式。</p>
+<p>解析主要针对类或接口（CONSTANT_Class_info）、字段（CONSTANT_Fieldref_info）、类方法（CONSTANT_Methodref_info）、接口方法（CONSTANT_InterfaceMethodref_info）、方法类型（CONSTANT_MethodType_info）、方法句柄（CONSTANT_MethodHandle_info）、调用点（CONSTANT_Dynamic_info）这7类符号引用进行，后三种和动态调用相关，这里只解释前4种：</p>
+<h3 id="类或接口"><a href="#类或接口" class="headerlink" title="类或接口"></a>类或接口</h3><p>假设当前代码所处的类为D，需要解析一个类或接口C的符号引用N，需要</p>
+<ol>
+<li>如果C不是一个数组类型，那么JVM会把N传给D的ClassLoader去加载C。</li>
+<li>如果C是数组类型，且数组的组建类型是对象，那么会加载其组建类型，然后由JVM生成一个代表此数组维度和元素的数组对象。</li>
+<li>在进行了1或2后，C已经在JVM中称为一个有效的类或接口了，然后验证D是否有对C的访问权限，没有则抛出异常</li>
+</ol>
+<h3 id="字段"><a href="#字段" class="headerlink" title="字段"></a>字段</h3><p>解析字段的符号引用，首先要解析字段表里class_index项索引的<code>CONSTANT_Class_info</code>符号引用，解析成功后，假设这个类/接口是C，</p>
+<ol>
+<li>如果C本身就包含了包含简单名称和字段描述符都与目标项匹配的字段，则返回这个字段的直接引用</li>
+<li>如果C中实现了接口，那么按照继承关系从下往上递归搜索各个接口和它的父接口，如果找到则返回</li>
+<li>如果C不是<code>java.lang.Object</code>，那么会从下向上递归搜索其父类，如果找到则返回</li>
+<li>都没找到则表示查找失败，返回<code>java.lang.NoSuchFieldError</code></li>
+</ol>
+<p>如果查找过程中返回了引用，但没有访问权限，也会抛出异常</p>
+<p>如果一个同名字段同时出现在父类和子类，那么编译器可能会拒绝编译</p>
+<h3 id="类方法"><a href="#类方法" class="headerlink" title="类方法"></a>类方法</h3><p>与字段解析类似，需要先解析所属的类/接口C，然后</p>
+<ol>
+<li>如果C是个接口，则报错<code>java.lang.IncompatibleClassChangeError</code></li>
+<li>从下往上递归查找C和C的父类，如果找到相匹配的方法则返回</li>
+<li>递归查找C的接口，如果找到相匹配的方法，说明C是个抽象类，抛出<code>java.lang.AbstractMethodError</code></li>
+<li>查找失败，报错<code>java.lang.NoSuchMethodError</code></li>
+</ol>
+<p>最后会验证其访问权限</p>
+<h3 id="接口方法"><a href="#接口方法" class="headerlink" title="接口方法"></a>接口方法</h3><p>与类方法解析类似，但需要保证C是个接口</p>
+<ol>
+<li>如果C不是接口，则报错<code>java.lang.IncompatibleClassChangeError</code></li>
+<li>递归查找C和C的父接口，直到<code>java.lang.Object</code>，如果找到则返回</li>
+<li>没找到报错<code>java.lang.NoSuchMethodError</code></li>
+</ol>
+<p>理论上接口方法都是<code>public</code>，所以应当不出现<code>java.lang.IllegalAccessError</code></p>
+<h2 id="初始化（initialization）"><a href="#初始化（initialization）" class="headerlink" title="初始化（initialization）"></a>初始化（initialization）</h2><p>直到初始化阶段才开始执行自定义的java代码， 也就是<code>&lt;cinit&gt;()</code>方法</p>
+<ol>
+<li><code>&lt;cinit&gt;()</code>由所有类变量的赋值动作和静态语句块<code>static{}</code>中的语句合并而成，顺序由源文件顺序而定，且<code>static{}</code>只能访问到定义在之前的变量</li>
+<li><code>&lt;cinit&gt;()</code>不需要显式的调用父类的<code>&lt;cinit&gt;()</code>，JVM会保证父类的肯定先执行完毕</li>
+<li>如果没有相关代码，可以不生成<code>&lt;cinit&gt;()</code>语句</li>
+<li>接口不能使用静态语句块，但也有变量初始化操作，故也会生成<code>&lt;cinit&gt;()</code>，但执行<code>&lt;cinit&gt;()</code>时不需要先执行父类的<code>&lt;cinit&gt;()</code>。同样的，接口的实现类初始化时也不会执行接口的<code>&lt;cinit&gt;()</code></li>
+<li>JVM会保证<code>&lt;cinit&gt;()</code>能被正确加锁，这也意味着可能多个线程卡在某个类的<code>&lt;cinit&gt;()</code>上</li>
+</ol>
+<h2 id="类加载器（ClassLoader）"><a href="#类加载器（ClassLoader）" class="headerlink" title="类加载器（ClassLoader）"></a>类加载器（ClassLoader）</h2><p>从JVM的角度讲，只有两类加载器：一类是使用C++实现的启动类加载器<code>Bootstrap ClassLoader</code>，是JVM的一部分；另一种是其他的类加载器，由JAVA语言实现，独立于JVM，且全继承了<code>java.lang.ClassLoader</code>。</p>
+<p>有三个系统提供的类加载器比较常见：</p>
+<ol>
+<li>启动类加载器（<code>Bootstrap ClassLoader</code>）：负责将<code>$JAVA_HOME/lib</code>中或<code>-Xbootclasspath</code>路径下，能被JVM识别的类库加载到JVM内存中，无法被java程序直接引用。用户自定义<code>ClassLoader</code>时需要需要<code>Bootstrap ClassLoader</code>加载，可以直接用<code>null</code>代替。</li>
+<li>扩展类加载器（<code>Extension ClassLoader</code>）：由<code>sun.misc.Launcher$ExtClassLoader</code>实现，负责加载<code>$JAVA_HOME/lib/ext</code>或<code>java.ext.dirs</code>系统变量所指定的路径下的所有类库，开发者也可以直接使用这个类加载器</li>
+<li>应用程序加载器（<code>Application ClassLoader</code>）：由<code>sun.misc.Launcher$AppClassLoader</code>实现，负责加载用户类路径<code>ClassPath</code>上所指定的类库，也是<code>getSystemClassLoader()</code>方法的返回值，故一般也称为系统类加载器，开发者可以直接使用，默认的类加载器</li>
+</ol>
+<p>每一个类加载器都拥有一个独立的类名称空间，也就是说判断两个Class是否相等（包括<code>Class.equals(), isAssignableFrom(), isInstance()</code>的返回值）要判断两个<code>ClassLoader</code>是否相等。</p>
+<p>开发人员也可以自定义类加载器，一般来说类加载器都应当有自己的父类加载器，且使用双亲委派模型（<code>Parents Delegation Model</code>）来复用父加载器代码：尽可能尝试让父类加载器去加载这个类。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/JVM/" rel="tag"># JVM</a>
+            
+              <a href="/tags/ClassLoader/" rel="tag"># ClassLoader</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/09/02/jvm4/" rel="next" title="JVM学习（4）类文件结构">
+                  <i class="fa fa-chevron-left"></i> JVM学习（4）类文件结构
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#加载（loading）"><span class="nav-number">1.</span> <span class="nav-text">加载（loading）</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#验证（verification）"><span class="nav-number">2.</span> <span class="nav-text">验证（verification）</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#文件格式验证"><span class="nav-number">2.1.</span> <span class="nav-text">文件格式验证</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#元数据验证"><span class="nav-number">2.2.</span> <span class="nav-text">元数据验证</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#字节码验证"><span class="nav-number">2.3.</span> <span class="nav-text">字节码验证</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#符号引用验证"><span class="nav-number">2.4.</span> <span class="nav-text">符号引用验证</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#准备（preparation）"><span class="nav-number">3.</span> <span class="nav-text">准备（preparation）</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#解析（resolution）"><span class="nav-number">4.</span> <span class="nav-text">解析（resolution）</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#类或接口"><span class="nav-number">4.1.</span> <span class="nav-text">类或接口</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#字段"><span class="nav-number">4.2.</span> <span class="nav-text">字段</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#类方法"><span class="nav-number">4.3.</span> <span class="nav-text">类方法</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#接口方法"><span class="nav-number">4.4.</span> <span class="nav-text">接口方法</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#初始化（initialization）"><span class="nav-number">5.</span> <span class="nav-text">初始化（initialization）</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#类加载器（ClassLoader）"><span class="nav-number">6.</span> <span class="nav-text">类加载器（ClassLoader）</span></a></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">12</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">15</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
