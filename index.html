@@ -191,6 +191,181 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/10/jvm6/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/09/10/jvm6/" class="post-title-link" itemprop="url">JVM学习（6）JVM字节码执行引擎</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-10 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-10T00:00:00+08:00">2019-09-10</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-12 17:11:08" itemprop="dateModified" datetime="2019-09-12T17:11:08+08:00">2019-09-12</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>由于JVM规范本身就是个虚拟概念，因此JVM执行引擎也是个标准，具体实现时会有优化，但要保证执行语义符合规范：即从外观（facade）上看，所有JVM虚拟机的执行引擎都是一致的。</p>
+<h2 id="运行时栈帧结构"><a href="#运行时栈帧结构" class="headerlink" title="运行时栈帧结构"></a>运行时栈帧结构</h2><p>栈帧（stack frame）是用于支持JVM进行方法调用和方法执行的数据结构，是运行时数据区中虚拟机栈（virtual machine stack）的栈数据，栈帧保存了方法的局部变量表、操作数栈、动态连接、方法返回地址等信息。之前提到方法表Code属性，里面有栈帧大小的限制，因此一个栈帧占用内存大小在编译期就决定了，具体占多大内存取决于JVM实现。</p>
+<p><img src="/images/jvm_stack_frame.png" alt="栈帧结构"></p>
+<p>对于某个线程而言，只有栈顶的栈帧是有效的（称为当前栈帧<code>current stack frame</code>），与其相关联的方法称为当前方法<code>current method</code>，所有字节码指令都只针对当前栈帧操作。</p>
+<p>与大多数物理机使用基于寄存器的指令框架不同，JVM使用的是基于栈的架构，比如两个数相加需要先把两个数入栈，然后<code>iadd</code>指令把栈顶两个数拿出来相加再入栈，而寄存器就没这么麻烦。一般来说基于栈的指令集会慢一些，好处是可移植，比如上图中的各个区域的大小都可以随便调整（相对的，同一物理机的每个寄存器的特性都不太一样，不同物理机可能寄存器数目都不一样），所以JVM实际执行的时候会对这些指令进行优化。</p>
+<h3 id="局部变量表（local-variable-table）"><a href="#局部变量表（local-variable-table）" class="headerlink" title="局部变量表（local variable table）"></a>局部变量表（local variable table）</h3><p>用于存放方法参数和方法内部定义的局部变量，方法的Code属性的<code>max_locals</code>数据项中确定了该方法所需要分配的局部变量表的最大容量。局部变量表的基本单位是slot，规范没有指明一个slot有多大，只是说每个slot都可以存放一个<code>boolean, byte, char, shot, int, float, reference, returnAddress</code>类型，那么具体实现的时候，一个slot可以用32位，也可以用64位来存。其中，JVM没有指定<code>reference</code>长度一定要多少，甚至可以不是指针，但要求它能做到：</p>
+<ul>
+<li>从这个引用可以直接或间接地查找到对象在java堆中的数据存放的起始地址索引</li>
+<li>从这个引用可以直接或间接地查找到对象所属数据类型在方法区中存储的类型信息（RTTI）</li>
+</ul>
+<p><code>returnAddress</code>现在用的比较少，较早的JVM使用这条指令实现异常处理，现在由异常表代替。</p>
+<p><code>long</code>和<code>double</code>要求是64位，因此一般会占两个slot。对局部变量表的索引从0开始，以slot为单位，如果遇到连在一起的slot却分开用时应该抛出异常。JVM通过局部变量表来实现参数传递的，如果方法不是静态方法，那么会先把<code>this</code>传为第0号局部变量，之后的参数顺序写入。参数分配完后再根据方法体内部定义的变量顺序和作用域分配其余slot。</p>
+<p>可以通过重复利用slot来节省栈帧空间，比如当前字节码PC计数器的值已经超出了某个变量的作用域，那么这个变量对应的slot就可以交给其他变量使用。更进一步，如果之前的变量所在的slot被复写了，那么它所指的object就可以被回收，相反如果没被复写，即使超出了它的作用域也不一定会被及时回收。一个技巧是可以及时为变量赋值为<code>null</code>来加快GC。</p>
+<p>最后，java不会为局部变量预设初始值，因此开发人员必须手动为局部变量设初值，否则编译不过，也通不过JVM字节码校验。</p>
+<h3 id="操作数栈（operand-stack）"><a href="#操作数栈（operand-stack）" class="headerlink" title="操作数栈（operand stack）"></a>操作数栈（operand stack）</h3><p>用于进行具体运算，方法的Code属性的<code>max_stack</code>定义了操作数栈的最大深度，且单位也是slot。方法开始执行的时候操作数栈为空，随着方法运行会有各种入栈出栈操作，且操作数栈中的数据类型必须和字节码指令的序列严格匹配，不过这个是在编译期和校验期做的。</p>
+<p>另外，理论上栈帧之间是完全独立的，实际上可以做一些优化，让两个栈帧部分重叠，这样就避免了额外的参数传递。</p>
+<p><img src="/images/jvm_stack_share_vars.png" alt="两个栈帧之间数据共享"></p>
+<h3 id="动态连接（dynamic-linking）"><a href="#动态连接（dynamic-linking）" class="headerlink" title="动态连接（dynamic linking）"></a>动态连接（dynamic linking）</h3><p>每个栈帧都包含一个指向常量池中该栈帧所属方法的引用，持有这个引用是为了支持方法调用过程中的动态调用（dynamic linking）。C++是通过虚函数表来实现多态的，而JAVA则是通过先查找所属类、再解析符号引用/函数表来确定调用哪个方法。</p>
+<h3 id="方法返回地址（Normal-Abrupt-Method-Invocation-Completion）"><a href="#方法返回地址（Normal-Abrupt-Method-Invocation-Completion）" class="headerlink" title="方法返回地址（Normal/Abrupt Method Invocation Completion）"></a>方法返回地址（Normal/Abrupt Method Invocation Completion）</h3><p>方法返回分为两种，一种是正常遇到返回指令结束方法调用，另一种是抛出异常且没有被正确处理（此时没有返回值）。无论如何退出，都需要在栈帧中保存一些信息，以便返回值上层调用位置。</p>
+<p>方法退出时需要将栈帧出栈，需要恢复上层方法的局部变量表和操作数栈，将返回值（如果有）压入上层的操作数栈，调整PC计数器的值以指向方法调用指令后的一条指令等。</p>
+<h3 id="附加信息"><a href="#附加信息" class="headerlink" title="附加信息"></a>附加信息</h3><p>JVM允许添加一些附加信息到栈帧（比如调试信息），取决于JVM具体实现。一般把动态连接、方法返回地址和其他附加信息全部归位一类，称为栈帧信息。</p>
+<h2 id="方法调用"><a href="#方法调用" class="headerlink" title="方法调用"></a>方法调用</h2><p>方法调用在方法执行之前，目的是找到应当调用哪个方法。由于class文件没有类似C的连接步骤，一切方法调用都是符号引用，因此需要先将符号引用解析为直接引用，而实际上可能需要在类加载期间、甚至在运行期间才能确定目标方法的直接引用。</p>
+<h3 id="解析（resolution）"><a href="#解析（resolution）" class="headerlink" title="解析（resolution）"></a>解析（resolution）</h3><p>首先，JVM提供了5中调用字节码的指令，分别是：</p>
+<ul>
+<li>invokestatic：调用静态方法</li>
+<li>invokespecial：调用实例构造器<code>&lt;init&gt;</code>、私有方法、父类方法</li>
+<li>invokevirtual：调用所有的虚方法</li>
+<li>invokeinterface：调用接口方法，会在运行时再确定一个实现此接口的对象</li>
+<li>invokedynamic：先在运行时动态解析出调用点限定符所引用的方法，然后再执行该方法</li>
+</ul>
+<p>在之前的章节提到过，类加载过程中有解析的步骤，其中会把一部分符号引用转换为直接引用，而能够转换的前提是在执行前就能确定是哪个方法，且在运行中不可变。符合这一条件的方法有：静态方法、私有方法、实例构造器、父类方法、final方法这几种。关于final方法，可以参考<a href="https://juejin.im/entry/58c4811161ff4b005d94fed2" target="_blank" rel="noopener">Final of Java，这一篇差不多了</a>，简单来说即final方法还是用<code>invokevirtual</code>调用，但可以在编译期确定，且可以被内联。</p>
+<h3 id="分派（dispatch）"><a href="#分派（dispatch）" class="headerlink" title="分派（dispatch）"></a>分派（dispatch）</h3><p>解析调用可以在编译阶段唯一确定，而分派调用则可以是静态的或动态的，且根据宗量（argument，个人理解是方法签名）可以分为单分派和多分派，两两组合可以分为静态单分派、静态多分派、动态单分派、动态多分派。</p>
+<h4 id="静态分派"><a href="#静态分派" class="headerlink" title="静态分派"></a>静态分派</h4><p>编译期根据调用时的类型来确定使用哪个签名，值得注意的地方有两点：</p>
+<ol>
+<li>是编译器“看到”的参数类型，而不是实际类型。比如<code>foo((A)B)</code>和<code>foo(B)</code>可能调用了两个完全不同的方法。这个类型称为静态类型（static type）或外观类型（apparent type）</li>
+<li>如果没有严格匹配的方法，那么编译器会尝试类型转换，选择一个更为“合适”的方法，比如对于<code>foo(char)</code>、<code>foo(int)</code>、<code>foo(Character)</code>、<code>foo(char...)</code>这几个方法时，如果输入参数是<code>&#39;a&#39;</code>，那么调用优先级依次降低。</li>
+</ol>
+<h4 id="动态分派"><a href="#动态分派" class="headerlink" title="动态分派"></a>动态分派</h4><p>在运行期根据实际类型确定方法执行版本的分派过程称为动态分派，Java的动态分派主要通过<code>invokevirtual</code>指令来实现，这个指令运行时解析过程大致分为以下几步：</p>
+<ol>
+<li>找到操作数栈顶的第一个元素所指向的对象的实际类型，记为C</li>
+<li>从这个类开始，按照继承关系从下到上查找匹配的方法，如果找到则进行权限校验，通过则返回这个方法的直接引用，否则抛出<code>java.lang.illegalAccessError</code></li>
+<li>如果一直没找到，则抛出<code>java.lang.AbstractMethodError</code></li>
+</ol>
+<h4 id="单分派和多分派"><a href="#单分派和多分派" class="headerlink" title="单分派和多分派"></a>单分派和多分派</h4><p>简单来说就是根据一个参数还是多个参数来进行分派（包括<code>this</code>）。事实上，java只支持静态多分派和动态单分派，即的动态分派只根据<code>this</code>来选择方法版本。C# 4.0后通过<code>dynamic</code>关键字可以支持动态多分配，参考<a href="https://chodounsky.net/2014/01/29/dynamic-dispatch-in-c-number/" target="_blank" rel="noopener">Dynamic Dispatch in C#</a>，例如</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line">public interface IBar &#123;&#125;</span><br><span class="line">public class Bar : IBar &#123;&#125;</span><br><span class="line">public sealed class FooBar : Bar &#123;&#125;</span><br><span class="line"></span><br><span class="line">// Simple helper for demonstration</span><br><span class="line">public static class ConsolePrinter</span><br><span class="line">&#123;</span><br><span class="line">    public static void Print(IBar item)</span><br><span class="line">    &#123;</span><br><span class="line">        Console.WriteLine(&quot;IBar&quot;);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    public static void Print(Bar item)</span><br><span class="line">    &#123;</span><br><span class="line">        Console.WriteLine(&quot;Bar&quot;);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    public static void Print(FooBar item)</span><br><span class="line">    &#123;</span><br><span class="line">        Console.WriteLine(&quot;FooBar&quot;);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">var bar = new Bar();</span><br><span class="line">var foo = new FooBar();</span><br><span class="line">IBar ibar = new FooBar();</span><br><span class="line"></span><br><span class="line">IBar[] items = &#123; bar, foo, ibar &#125;;</span><br></pre></td></tr></table></figure>
+
+<p>定义了三个不同的实例，放到同一个数组里，那么执行的结果应当是一样的：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">foreach (var item in items)</span><br><span class="line">&#123;</span><br><span class="line">    ConsolePrinter.Print(item);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">// prints IBar</span><br><span class="line">// prints IBar</span><br><span class="line">// prints IBar</span><br></pre></td></tr></table></figure>
+
+<p>而如果在foreach循环中用dynamic来解释，结果就不同了：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">foreach (dynamic item in items)</span><br><span class="line">&#123;</span><br><span class="line">    ConsolePrinter.Print(item);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">// prints Bar</span><br><span class="line">// prints FooBar</span><br><span class="line">// prints FooBar</span><br></pre></td></tr></table></figure>
+
+<p>这意味着C#中会在运行时解析dynamic类型，拿到具体的对应类型后再决定方法签名，也就实现了动态多分派（虽然这个例子只有一个参数，还是单分配）</p>
+<h4 id="动态分派的实现"><a href="#动态分派的实现" class="headerlink" title="动态分派的实现"></a>动态分派的实现</h4><p>理论上可以在运行时解析方法的符号链接，不过一般在实现中会用虚方法表（virtual method table, vtable，类似在<code>invokeinterface</code>时会用到interface method table, itable），如下图所示：</p>
+<p><img src="/images/jvm_vtable.jpg" alt="JVM 虚方法表"></p>
+<p>每个类维护了一个虚表，如果没有重写某个方法，就和父类的入口地址保持一致，这些可以在载入时实现。</p>
+<h3 id="动态类型语言支持"><a href="#动态类型语言支持" class="headerlink" title="动态类型语言支持"></a>动态类型语言支持</h3><p>动态类型语言的关键特征是，它的类型检查的主体过程在运行期而非编译期。JVM中<code>invokespecial、invokevirtual、invokeinterface、invokestatic</code>的“参数”实际上都包含了“哪个类中的哪个方法”这一信息。比如<code>foo.bar()</code>这个调用，如果<code>foo</code>所声明的类型没有实现<code>bar()</code>方法，那么就无法编译通过；而在动态类型语言中，甚至可以不要求<code>bar()</code>被定义过都有可能正常执行，即使<code>foo</code>确实没定义过这个方法、也没有相关的语法糖，只要没执行到这条语句也不会报错。</p>
+<p>JDK1.7后引入了<code>invokedynamic</code>指令和<code>java.lang.invoke</code>包，用以实现动态调用，而在JDK1.8里引入的lambda表达式使用了<code>invokedynamic</code>，具体可以参考<a href="https://colobu.com/2014/11/06/secrets-of-java-8-lambda/" target="_blank" rel="noopener">Java 8 Lambda 揭秘</a>和<a href="https://my.oschina.net/haogrgr/blog/367391" target="_blank" rel="noopener">JDK8中Lambda表达式底层实现浅析(一)</a>。在学习<code>invokedynamic</code>之前，需要先了解<code>MethodHandle</code>。</p>
+<h4 id="MethodHandle"><a href="#MethodHandle" class="headerlink" title="MethodHandle"></a>MethodHandle</h4><p>简单来说<code>MethodHandle</code>有点像C/C++的函数指针，在此之前java为了实现函数指针需要用<code>interface</code>，而使用<code>interface</code>时需要先实例化一个类再调用这个类的某个方法，<code>MethodHandle</code>相对来说会“轻量级”一些，比如下面这个例子：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> java.lang.invoke.MethodHandle;</span><br><span class="line"><span class="keyword">import</span> java.lang.invoke.MethodHandles;</span><br><span class="line"><span class="keyword">import</span> java.lang.invoke.MethodType;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">MethodHandleTest</span> </span>&#123;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="class"><span class="keyword">class</span> <span class="title">Foo1</span></span>&#123;</span><br><span class="line">    <span class="function"><span class="keyword">protected</span> <span class="keyword">void</span> <span class="title">println</span><span class="params">()</span></span>&#123;</span><br><span class="line">      System.out.println(<span class="string">"foo1"</span>);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="class"><span class="keyword">class</span> <span class="title">Foo2</span></span>&#123;</span><br><span class="line">    <span class="function"><span class="keyword">protected</span> <span class="keyword">void</span> <span class="title">println</span><span class="params">()</span></span>&#123;</span><br><span class="line">      System.out.println(<span class="string">"foo2"</span>);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Throwable</span>&#123;</span><br><span class="line">    Object obj = System.currentTimeMillis() % <span class="number">2</span> == <span class="number">0</span> ? <span class="keyword">new</span> Foo1() : <span class="keyword">new</span> Foo2();</span><br><span class="line">    getPrintlnMH(obj).invokeExact();</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">private</span> <span class="keyword">static</span> MethodHandle <span class="title">getPrintlnMH</span><span class="params">(Object reveiver)</span> <span class="keyword">throws</span> Throwable</span>&#123;</span><br><span class="line">    MethodType mt = MethodType.methodType(<span class="keyword">void</span>.class);</span><br><span class="line">    <span class="keyword">return</span> MethodHandles.lookup().findVirtual(reveiver.getClass(), <span class="string">"println"</span>, mt).bindTo(reveiver);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>MethodHandles.lookup().findVirtual()</code>用以查找在指定类中符合给定方法签名且符合调用权限的方法句柄，并且由于这个方法不是静态方法，需要绑定<code>this</code>，所以要把<code>reveiver</code>传给<code>bindTo()</code>。</p>
+<p>可以看到Foo1和Foo2之间没有继承关系，也可以通过方法签名找到并调用指定方法：这和反射有些相似，但反射（reflection）和MethodHandle实际区别很大：</p>
+<ol>
+<li>反射是在模拟java代码层次的方法调用，而MethodHandle是在模拟字节码层次的调用，比如<code>MethodHandles.lookup()</code>中的<code>findStatic()、findVirtual()、findSpecial()</code>分别对应字节码<code>invokestatic、invokevirtual&amp;invokeinterface、invokespecial</code>这几个字节码指令的执行权限调用行为，这在使用反射时不需要关心</li>
+<li>反射中的<code>java.lang.reflect.Method</code>对象远比<code>MethodHandle</code>机制中的<code>java.lang.invoke.MethodHandle</code>对象所含的信息多，前者是方法在java一端的全面映像，包含了方法的签名、描述符、方法属性表中的各种属性的java端表示方式、执行权限等信息，而后者只包含与执行该方法相关的信息。</li>
+<li>原则上由于<code>MethodHandle</code>是字节码调用的模拟，理论上可以在这方面做一些优化。</li>
+<li>反射API设计目标是为java语言服务的，而<code>MethodHandle</code>则设计为可以为所有JVM支持的语言服务。</li>
+</ol>
+<h4 id="invokedynamic指令"><a href="#invokedynamic指令" class="headerlink" title="invokedynamic指令"></a>invokedynamic指令</h4><p>某种程度上<code>invokedynamic</code>和<code>MethodHandle</code>的目标类似，都是为了解决<code>invoke*</code>的分派规则由JVM决定的问题，让开发者有更高的查找目标方法的自由度。JDK1.8实现lambda表达式时使用了<code>invokedynamic</code>，下面是一段代码和它对应的反编译数据，生成的.class在<a href="/files/HelloWorld.class">这里</a></p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">HelloWorld</span> </span>&#123;</span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Throwable</span>&#123;</span><br><span class="line">    Runnable r = ()-&gt; System.out.println(<span class="string">"hello"</span>);</span><br><span class="line">    r.run();</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br></pre></td><td class="code"><pre><span class="line">public class HelloWorld</span><br><span class="line">  minor version: 0</span><br><span class="line">  major version: 52</span><br><span class="line">  flags: ACC_PUBLIC, ACC_SUPER</span><br><span class="line">Constant pool:</span><br><span class="line">   <span class="comment">#1 = Methodref          #8.#27         // java/lang/Object."&lt;init&gt;":()V</span></span><br><span class="line">   <span class="comment">#2 = InvokeDynamic      #0:#32         // #0:run:()Ljava/lang/Runnable;</span></span><br><span class="line">   <span class="comment">#3 = InterfaceMethodref #33.#34        // java/lang/Runnable.run:()V</span></span><br><span class="line">   <span class="comment">#4 = Fieldref           #35.#36        // java/lang/System.out:Ljava/io/PrintStream;</span></span><br><span class="line">   <span class="comment">#5 = String             #37            // hello</span></span><br><span class="line">   <span class="comment">#6 = Methodref          #38.#39        // java/io/PrintStream.println:(Ljava/lang/String;)V</span></span><br><span class="line">   <span class="comment">#7 = Class              #40            // HelloWorld</span></span><br><span class="line">   <span class="comment">#8 = Class              #41            // java/lang/Object</span></span><br><span class="line">   <span class="comment">#9 = Utf8               &lt;init&gt;</span></span><br><span class="line">  <span class="comment">#10 = Utf8               ()V</span></span><br><span class="line">  <span class="comment">#11 = Utf8               Code</span></span><br><span class="line">  <span class="comment">#12 = Utf8               LineNumberTable</span></span><br><span class="line">  <span class="comment">#13 = Utf8               LocalVariableTable</span></span><br><span class="line">  <span class="comment">#14 = Utf8               this</span></span><br><span class="line">  <span class="comment">#15 = Utf8               LHelloWorld;</span></span><br><span class="line">  <span class="comment">#16 = Utf8               main</span></span><br><span class="line">  <span class="comment">#17 = Utf8               ([Ljava/lang/String;)V</span></span><br><span class="line">  <span class="comment">#18 = Utf8               args</span></span><br><span class="line">  <span class="comment">#19 = Utf8               [Ljava/lang/String;</span></span><br><span class="line">  <span class="comment">#20 = Utf8               r</span></span><br><span class="line">  <span class="comment">#21 = Utf8               Ljava/lang/Runnable;</span></span><br><span class="line">  <span class="comment">#22 = Utf8               Exceptions</span></span><br><span class="line">  <span class="comment">#23 = Class              #42            // java/lang/Throwable</span></span><br><span class="line">  <span class="comment">#24 = Utf8               lambda$main$0</span></span><br><span class="line">  <span class="comment">#25 = Utf8               SourceFile</span></span><br><span class="line">  <span class="comment">#26 = Utf8               HelloWorld.java</span></span><br><span class="line">  <span class="comment">#27 = NameAndType        #9:#10         // "&lt;init&gt;":()V</span></span><br><span class="line">  <span class="comment">#28 = Utf8               BootstrapMethods</span></span><br><span class="line">  <span class="comment">#29 = MethodHandle       #6:#43         // invokestatic java/lang/invoke/LambdaMetafactory.metafactory:(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;</span></span><br><span class="line">  <span class="comment">#30 = MethodType         #10            //  ()V</span></span><br><span class="line">  <span class="comment">#31 = MethodHandle       #6:#44         // invokestatic HelloWorld.lambda$main$0:()V</span></span><br><span class="line">  <span class="comment">#32 = NameAndType        #45:#46        // run:()Ljava/lang/Runnable;</span></span><br><span class="line">  <span class="comment">#33 = Class              #47            // java/lang/Runnable</span></span><br><span class="line">  <span class="comment">#34 = NameAndType        #45:#10        // run:()V</span></span><br><span class="line">  <span class="comment">#35 = Class              #48            // java/lang/System</span></span><br><span class="line">  <span class="comment">#36 = NameAndType        #49:#50        // out:Ljava/io/PrintStream;</span></span><br><span class="line">  <span class="comment">#37 = Utf8               hello</span></span><br><span class="line">  <span class="comment">#38 = Class              #51            // java/io/PrintStream</span></span><br><span class="line">  <span class="comment">#39 = NameAndType        #52:#53        // println:(Ljava/lang/String;)V</span></span><br><span class="line">  <span class="comment">#40 = Utf8               HelloWorld</span></span><br><span class="line">  <span class="comment">#41 = Utf8               java/lang/Object</span></span><br><span class="line">  <span class="comment">#42 = Utf8               java/lang/Throwable</span></span><br><span class="line">  <span class="comment">#43 = Methodref          #54.#55        // java/lang/invoke/LambdaMetafactory.metafactory:(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;</span></span><br><span class="line">  <span class="comment">#44 = Methodref          #7.#56         // HelloWorld.lambda$main$0:()V</span></span><br><span class="line">  <span class="comment">#45 = Utf8               run</span></span><br><span class="line">  <span class="comment">#46 = Utf8               ()Ljava/lang/Runnable;</span></span><br><span class="line">  <span class="comment">#47 = Utf8               java/lang/Runnable</span></span><br><span class="line">  <span class="comment">#48 = Utf8               java/lang/System</span></span><br><span class="line">  <span class="comment">#49 = Utf8               out</span></span><br><span class="line">  <span class="comment">#50 = Utf8               Ljava/io/PrintStream;</span></span><br><span class="line">  <span class="comment">#51 = Utf8               java/io/PrintStream</span></span><br><span class="line">  <span class="comment">#52 = Utf8               println</span></span><br><span class="line">  <span class="comment">#53 = Utf8               (Ljava/lang/String;)V</span></span><br><span class="line">  <span class="comment">#54 = Class              #57            // java/lang/invoke/LambdaMetafactory</span></span><br><span class="line">  <span class="comment">#55 = NameAndType        #58:#62        // metafactory:(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;</span></span><br><span class="line">  <span class="comment">#56 = NameAndType        #24:#10        // lambda$main$0:()V</span></span><br><span class="line">  <span class="comment">#57 = Utf8               java/lang/invoke/LambdaMetafactory</span></span><br><span class="line">  <span class="comment">#58 = Utf8               metafactory</span></span><br><span class="line">  <span class="comment">#59 = Class              #64            // java/lang/invoke/MethodHandles$Lookup</span></span><br><span class="line">  <span class="comment">#60 = Utf8               Lookup</span></span><br><span class="line">  <span class="comment">#61 = Utf8               InnerClasses</span></span><br><span class="line">  <span class="comment">#62 = Utf8               (Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;</span></span><br><span class="line">  <span class="comment">#63 = Class              #65            // java/lang/invoke/MethodHandles</span></span><br><span class="line">  <span class="comment">#64 = Utf8               java/lang/invoke/MethodHandles$Lookup</span></span><br><span class="line">  <span class="comment">#65 = Utf8               java/lang/invoke/MethodHandles</span></span><br><span class="line">&#123;</span><br><span class="line">  public HelloWorld();</span><br><span class="line">    descriptor: ()V</span><br><span class="line">    flags: ACC_PUBLIC</span><br><span class="line">    Code:</span><br><span class="line">      stack=1, locals=1, args_size=1</span><br><span class="line">         0: aload_0</span><br><span class="line">         1: invokespecial <span class="comment">#1                  // Method java/lang/Object."&lt;init&gt;":()V</span></span><br><span class="line">         4: <span class="built_in">return</span></span><br><span class="line">      LineNumberTable:</span><br><span class="line">        line 1: 0</span><br><span class="line">      LocalVariableTable:</span><br><span class="line">        Start  Length  Slot  Name   Signature</span><br><span class="line">            0       5     0  this   LHelloWorld;</span><br><span class="line"></span><br><span class="line">  public static void main(java.lang.String[]) throws java.lang.Throwable;</span><br><span class="line">    descriptor: ([Ljava/lang/String;)V</span><br><span class="line">    flags: ACC_PUBLIC, ACC_STATIC</span><br><span class="line">    Code:</span><br><span class="line">      stack=1, locals=2, args_size=1</span><br><span class="line">         0: invokedynamic <span class="comment">#2,  0              // InvokeDynamic #0:run:()Ljava/lang/Runnable;</span></span><br><span class="line">         5: astore_1</span><br><span class="line">         6: aload_1</span><br><span class="line">         7: invokeinterface <span class="comment">#3,  1            // InterfaceMethod java/lang/Runnable.run:()V</span></span><br><span class="line">        12: <span class="built_in">return</span></span><br><span class="line">      LineNumberTable:</span><br><span class="line">        line 3: 0</span><br><span class="line">        line 4: 6</span><br><span class="line">        line 5: 12</span><br><span class="line">      LocalVariableTable:</span><br><span class="line">        Start  Length  Slot  Name   Signature</span><br><span class="line">            0      13     0  args   [Ljava/lang/String;</span><br><span class="line">            6       7     1     r   Ljava/lang/Runnable;</span><br><span class="line">    Exceptions:</span><br><span class="line">      throws java.lang.Throwable</span><br><span class="line"></span><br><span class="line">  private static void lambda<span class="variable">$main</span><span class="variable">$0</span>();</span><br><span class="line">    descriptor: ()V</span><br><span class="line">    flags: ACC_PRIVATE, ACC_STATIC, ACC_SYNTHETIC</span><br><span class="line">    Code:</span><br><span class="line">      stack=2, locals=0, args_size=0</span><br><span class="line">         0: getstatic     <span class="comment">#4                  // Field java/lang/System.out:Ljava/io/PrintStream;</span></span><br><span class="line">         3: ldc           <span class="comment">#5                  // String hello</span></span><br><span class="line">         5: invokevirtual <span class="comment">#6                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V</span></span><br><span class="line">         8: <span class="built_in">return</span></span><br><span class="line">      LineNumberTable:</span><br><span class="line">        line 3: 0</span><br><span class="line">&#125;</span><br><span class="line">SourceFile: <span class="string">"HelloWorld.java"</span></span><br><span class="line">InnerClasses:</span><br><span class="line">     public static final <span class="comment">#60= #59 of #63; //Lookup=class java/lang/invoke/MethodHandles$Lookup of class java/lang/invoke/MethodHandles</span></span><br><span class="line">BootstrapMethods:</span><br><span class="line">  0: <span class="comment">#29 invokestatic java/lang/invoke/LambdaMetafactory.metafactory:(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;</span></span><br><span class="line">    Method arguments:</span><br><span class="line">      <span class="comment">#30 ()V</span></span><br><span class="line">      <span class="comment">#31 invokestatic HelloWorld.lambda$main$0:()V</span></span><br><span class="line">      <span class="comment">#30 ()V</span></span><br></pre></td></tr></table></figure>
+
+<p><code>invokedynamic</code>的操作形式是<code>invokedynamic indexbyte1 indexbyte2 0 0</code>，其中后两个0是写死的以便之后扩展，前两个参数联合起来<code>(indexbyte1 &lt;&lt; 8) | indexbyte2</code>指向常量池中的一项被称为动态调用点（call site）的符号引用，这里为字节码为<code>ba 0002 00 00</code>，即CallSite为第二个常量，其结构体声明为</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">CONSTANT_InvokeDynamic_info &#123;</span><br><span class="line">    u1 tag;</span><br><span class="line">    u2 bootstrap_method_attr_index;</span><br><span class="line">    u2 name_and_type_index;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>其中<code>bootstrap_method_attr_index</code>指向了<code>bootstrap_methods</code>数组中的某个<code>bootstrap method</code>，从反编译出的信息可以看到这个<code>invokedynamic</code>的字节码指令为<code>12 0000 0020</code>，标明它的引导方法是第0个，方法类型参考第32个常量<code>run:()Ljava/lang/Runnable;</code>。引导方法<code>Bootstrap Method</code>被保存在新增的<code>BootstrapMethods</code>属性中，其完整定义如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">BootstrapMethods_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 num_bootstrap_methods;</span><br><span class="line">    &#123;   u2 bootstrap_method_ref;</span><br><span class="line">        u2 num_bootstrap_arguments;</span><br><span class="line">        u2 bootstrap_arguments[num_bootstrap_arguments];</span><br><span class="line">    &#125; bootstrap_methods[num_bootstrap_methods];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里相关的二进制代码为<code>1c 00 00 00 0c 00 01 00 1d 00 03 00 1e 00 1f 00 1e</code>，表示只有一个引导方法，对应的<code>MethodHandle</code>为<code>java/lang/invoke/LambdaMetafactory.metafactory</code>这一静态方法，其完整签名为</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> CallSite <span class="title">metafactory</span><span class="params">(</span></span></span><br><span class="line"><span class="function"><span class="params">    MethodHandles.Lookup caller, // 代表查找上下文与调用者的访问权限, 使用invokedynamic指令时, JVM会自动自动填充这个参数, 这里JVM为我们填充为Lookup(HelloWorld.class, (PUBLIC | PRIVATE | PROTECTED | PACKAGE)</span>) 意思是这个Lookup实例可以访问HelloWorld类的所有成员.</span></span><br><span class="line"><span class="function">    String invokedName,  <span class="comment">//  要实现的方法的名字, 使用invokedynamic时, JVM自动帮我们填充(填充内容来自常量池InvokeDynamic.NameAndType.Name), 这里填充为run</span></span></span><br><span class="line"><span class="function">    MethodType invokedType,  <span class="comment">// 调用点期望的方法参数的类型和返回值的类型(方法signature). 使用invokedynamic指令时, JVM会自动自动填充这个参数，填充内容来自常量池InvokeDynamic.NameAndType.Type), 在这里参数为空, 返回值类型为java/lang/Runnable, 表示这个调用点的目标方法的参数为空, 然后invokedynamic执行完后会返回一个Runnable实例</span></span></span><br><span class="line"><span class="function">    MethodType samMethodType,  <span class="comment">// 函数对象将要实现的接口方法类型, 这里运行时, 值为()V，即Runnable.run()方法的类型</span></span></span><br><span class="line"><span class="function">    MethodHandle implMethod, <span class="comment">// 一个直接方法句柄(DirectMethodHandle), 描述在调用时将被执行的具体实现方法 (包含适当的参数适配, 返回类型适配,和在调用参数前附加上捕获的参数), 在这里为 HelloWorld.lambda$main$0:()V 方法的方法句柄. </span></span></span><br><span class="line"><span class="function">    MethodType instantiatedMethodType) <span class="comment">// 函数接口方法替换泛型为具体类型后的方法类型, 通常和samMethodType一样，除非发生了类型擦除</span></span></span><br><span class="line"><span class="function">    <span class="keyword">throws</span> LambdaConversionException</span></span><br></pre></td></tr></table></figure>
+
+<p>在执行<code>invokedynamic</code>时会执行其关联的引导方法，前三个参数由JVM自动填充，后三个参数来自属性表中的<code>bootstrap_arguments</code>。可以看到，lambda表达式的具体实现被编译成了<code>HelloWorld.lambda$main$0:()V</code>这样一个静态方法。执行完引导方法后，会返回一个<code>CallSite</code>对象，它的<code>target</code>属性关联了所调用的方法句柄，最后执行这个方法句柄。</p>
+<p>值得一提的是，lambda表达式只是在“生成”的时候调用了<code>invokedynamic</code>，比如上面那个例子，即使没有<code>r.run();</code>这句，也会产生一条<code>invokedynamic</code>指令，换句话说实际上这里<code>invokedynamic</code>产生了一个<code>Runnable</code>对象，然后把它赋值到了一个局部变量。</p>
+<h2 id="基于栈的字节码解释引擎"><a href="#基于栈的字节码解释引擎" class="headerlink" title="基于栈的字节码解释引擎"></a>基于栈的字节码解释引擎</h2><p>这段内容其实没啥好说的，举个例子，比如这样一段代码</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">int</span> a = <span class="number">1</span>, b = <span class="number">2</span>, c = <span class="number">4</span>;</span><br><span class="line">c = (a-c)*b;</span><br></pre></td></tr></table></figure>
+
+<p>会翻译为</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">0: iconst_1</span><br><span class="line">1: istore_1</span><br><span class="line">2: iconst_2</span><br><span class="line">3: istore_2</span><br><span class="line">4: iconst_4</span><br><span class="line">5: istore_3</span><br><span class="line">6: iload_1</span><br><span class="line">7: iload_3</span><br><span class="line">8: isub</span><br><span class="line">9: iload_2</span><br><span class="line">10: imul</span><br><span class="line">11: istore_3</span><br></pre></td></tr></table></figure>
+
+<p>意思是把常量1入栈，出栈后保存到局部变量1；常量2入栈，出栈后保存到局部变量2；常量4入栈，出栈后保存到局部变量3；局部变量1和3分别入栈，出栈两个int、相减后入栈，将变量2入栈，出栈两个变量、相乘后出栈，此时栈里只有一个int（-6），最后出栈并保存到变量3。</p>
+<p>可以看出真的这么跑的化执行效率很低，一般JVM都会对此进行优化。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/06/jvm5/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1387,6 +1562,105 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/java-dynamic-proxy/" class="post-title-link" itemprop="url">Java动态代理笔记</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:46:34" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。</p>
+<p>代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。</p>
+<p>在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实现细节和副作用。常见的使用代理的场合有：</p>
+<ol>
+<li>远程代理（Remote Proxy）：将一个远程对象包装成本地对象。WIKI的例子是ATM，ATM保存了银行信息，用户访问ATM等同于访问银行。</li>
+<li>虚拟代理（Virtual Proxy）：对象可以不实际存在，只有当访问时才会真正生成（也可以实现一部分）。参考延迟加载。</li>
+<li>保护代理（Protection Proxy）：在实际调用前/中/后进行资源安全性的检查。</li>
+<li>Copy-on-Write代理：虚拟代理的一种。把复制（克隆）拖延到只有在客户端需要时，才真正采取行动。</li>
+<li>Cache代理：为某一个目标操作的结果提供临时的存储空间，以便多个客户端可以共享这些结果。</li>
+<li>防火墙（Firewall）代理：保护目标，不让恶意用户接近。</li>
+<li>同步化（Synchronization）代理：使几个用户能够同时使用一个对象而没有冲突。</li>
+<li>智能引用（Smart Reference）代理：当一个对象被引用时，提供一些额外的操作，比如将对此对象调用的次数记录下来等。</li>
+</ol>
+<p>组合/继承都可以实现代理模式，当然静态代理在JAVA里使用继承会简单一些。即A’继承A，在每个父方法调用前后做一些操作。</p>
+<p>JAVA也支持动态代理，按我理解应该是组合模式。对于真实对象object，需要实现一个InvocationHandler接口，再通过Proxy.newProxyInstance(classLoader,interfaces,handler)来创建代理对象。</p>
+<ol>
+<li>classLoader: 生成的代理类所在的classLoader。（下次学习一下classLoader）。</li>
+<li>interfaces：想要代理的接口的集合。</li>
+<li>handler：我们刚才创建的handler，使用它来实际调用object，并做一些其他操作。</li>
+</ol>
+<p>第二个参数interfaces很重要，JAVA动态代理会动态创建一个类似<code>com.sun.proxy.$Proxy0</code>的类，这个类实现了所有的interfaces。在继承关系比较复杂的情况下，个人建议写死会比较好，使用object.getClass().getInterfaces()会出现一些意想不到的情况。比如有接口I1,I2,I3,C1实现了I1,I2，C2继承了C1，且实现了I3，那么一个C2的实例c2.getClass().getInterfaces()返回结果只有I3，无法代理I1和I2。</p>
+<p>在实现InvocationHandler接口时，我们需要实现invoke(proxy, method, args)方法，其中可能会调用method.invode(object,args)，当object因为某些原因报错时，method.invode会抛出InvocationTargetException异常：这与所预想抛出的异常不一致，从而导致上层调用者捕捉不到对应的异常。因此最好写成</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jvm1/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1493,214 +1767,6 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/java-dynamic-proxy/" class="post-title-link" itemprop="url">Java动态代理笔记</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:46:34" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。</p>
-<p>代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。</p>
-<p>在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实现细节和副作用。常见的使用代理的场合有：</p>
-<ol>
-<li>远程代理（Remote Proxy）：将一个远程对象包装成本地对象。WIKI的例子是ATM，ATM保存了银行信息，用户访问ATM等同于访问银行。</li>
-<li>虚拟代理（Virtual Proxy）：对象可以不实际存在，只有当访问时才会真正生成（也可以实现一部分）。参考延迟加载。</li>
-<li>保护代理（Protection Proxy）：在实际调用前/中/后进行资源安全性的检查。</li>
-<li>Copy-on-Write代理：虚拟代理的一种。把复制（克隆）拖延到只有在客户端需要时，才真正采取行动。</li>
-<li>Cache代理：为某一个目标操作的结果提供临时的存储空间，以便多个客户端可以共享这些结果。</li>
-<li>防火墙（Firewall）代理：保护目标，不让恶意用户接近。</li>
-<li>同步化（Synchronization）代理：使几个用户能够同时使用一个对象而没有冲突。</li>
-<li>智能引用（Smart Reference）代理：当一个对象被引用时，提供一些额外的操作，比如将对此对象调用的次数记录下来等。</li>
-</ol>
-<p>组合/继承都可以实现代理模式，当然静态代理在JAVA里使用继承会简单一些。即A’继承A，在每个父方法调用前后做一些操作。</p>
-<p>JAVA也支持动态代理，按我理解应该是组合模式。对于真实对象object，需要实现一个InvocationHandler接口，再通过Proxy.newProxyInstance(classLoader,interfaces,handler)来创建代理对象。</p>
-<ol>
-<li>classLoader: 生成的代理类所在的classLoader。（下次学习一下classLoader）。</li>
-<li>interfaces：想要代理的接口的集合。</li>
-<li>handler：我们刚才创建的handler，使用它来实际调用object，并做一些其他操作。</li>
-</ol>
-<p>第二个参数interfaces很重要，JAVA动态代理会动态创建一个类似<code>com.sun.proxy.$Proxy0</code>的类，这个类实现了所有的interfaces。在继承关系比较复杂的情况下，个人建议写死会比较好，使用object.getClass().getInterfaces()会出现一些意想不到的情况。比如有接口I1,I2,I3,C1实现了I1,I2，C2继承了C1，且实现了I3，那么一个C2的实例c2.getClass().getInterfaces()返回结果只有I3，无法代理I1和I2。</p>
-<p>在实现InvocationHandler接口时，我们需要实现invoke(proxy, method, args)方法，其中可能会调用method.invode(object,args)，当object因为某些原因报错时，method.invode会抛出InvocationTargetException异常：这与所预想抛出的异常不一致，从而导致上层调用者捕捉不到对应的异常。因此最好写成</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/jni/" class="post-title-link" itemprop="url">JNI使用中的一些注意事项</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:41:05" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。</p>
-<h3 id="内存模型和参数传递"><a href="#内存模型和参数传递" class="headerlink" title="内存模型和参数传递"></a>内存模型和参数传递</h3><p>比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直接用参数传过来。如果数据量比较大，或者不是基本类型，可能需要用byte[]传。如果数据量巨大，只能用文件等形式传递了。个人目前处理的文件一般是不超过20MB的小文件，因此选择第二种方式传递参数（虽然数据在heap区和native区来回复制也有一定代价），不过好在数据量不是很大，可以接受——另外一个使用byte[]而非DirectByteBuffer的重要原因是我还是有可能会用java代码来处理数据，而java处理DirectByteBuffer有时候很麻烦。。如果是非常大的文件（比如视频文件），使用临时文件/DirectBuffer更好一些。</p>
-<p>流数据的处理更复杂一些。现在似乎没有非常方便的在本地代码中读InputStream等的方法（当然可以做到，比如使用<code>GetMethodID&amp;Call??Method</code>等），但我没试过这种方式——即使不考虑效率因素，在本地代码中调用JAVA方法也不是一个好选择，毕竟本地代码处理JAVA运行中的各种异常实在太复杂了。最好还是将数据预处理后，交由本地代码处理，本地代码尽量保持简洁。</p>
-<p>当然最重要的还是保证内存不泄漏，本地代码中new/malloc自不必说，记得在最后调用DeleteLocalRef、ReleaseByteArrayElements等函数释放JAVA对象的引用。</p>
-<h3 id="加载动态库"><a href="#加载动态库" class="headerlink" title="加载动态库"></a>加载动态库</h3><p>我用的是org.scijava:native-lib-loader。本质上调用的还是System.load，这个库的做法是将动态库extract提取到一个临时文件，然后System.load()，不想引入新的库的话可以自己手动实现一下。</p>
-<h3 id="编译和调试"><a href="#编译和调试" class="headerlink" title="编译和调试"></a>编译和调试</h3><p>首先编译环境最好和目标运行环境一致，否则可能会出现各种意想不到的状况，比如系统库版本不兼容等。</p>
-<p>如果是自己重新写一个库可以规避掉很多问题。我遇到的情况通常是需要改写现有的库的接口，方便JAVA调用，那么至少需要</p>
-<ul>
-<li>修改源代码，暴露出可供调用的JNI外部函数</li>
-<li>改写MakeFile/CMakeLists，将原本的可执行文件编译为动态链接库</li>
-</ul>
-<p>只调试本地代码相对简单，但有些错误只有带JAVA调用时才会出现。我使用的IDE是CLion，暂时没找到比较方便的调试方法，目前的做法是加上DEBUG参数编译动态库后，</p>
-<ol>
-<li>在调用native方法前打个断点，运行至断点</li>
-<li>找到java进程的ID（ps，jps或者在程序里打印出来）</li>
-<li>CLion中Run - Attach to Local Process，选择对应的PID，在要调试的地方打断点</li>
-<li>继续java进程，进入本地代码中的断点，开始调试</li>
-</ol>
-<p>尽管GDB Remote Debug可以远程调试，但似乎不支持远程调试JNI？</p>
-<h3 id="代码编写时的注意事项"><a href="#代码编写时的注意事项" class="headerlink" title="代码编写时的注意事项"></a>代码编写时的注意事项</h3><ol>
-<li>很多库实现时只支持FILE<em>，改写为读内存很麻烦。这里推荐fmemopen和open_memstream，可以将数组转变为FILE</em>。</li>
-<li>很多C/C++代码逻辑中没有异常处理，我个人也不建议使用throw/catch。但JAVA中使用异常捕捉机制会方便很多，且有时候本地代码中遇到错误时也需要把异常信息传给java进程，那么在C/C++代码运行结束且发现运行出错时，手动抛出一个JAVA异常（调用(*env)-&gt;ThrowNew()），可能是一个比较好的风格。</li>
-</ol>
-<h3 id="线程安全"><a href="#线程安全" class="headerlink" title="线程安全"></a>线程安全</h3><p>有些库可能只支持单线程，或者可能最初设计的情景仅仅是程序运行，输入一个文件，处理，输出，程序结束：而内部实现可能是多线程。要处理多个文件，需要同时启动多个程序。</p>
-<p>如果简单的用JNI调用，很可能会在并行调用时产生冲突，因为这种库会有大量的全局/静态变量，而没有任何线程同步操作，甚至不可能同步。</p>
-<p>简单的处理方法是把JNI函数加锁，即同一时刻一个库暴露出的所有函数至多只有一个调用。复杂的处理方法就是自己手动改代码，把所有全局/静态变量统计出来放在一个struct里，调用时new一个，调用结束时delete掉。</p>
-<p>当然如果对库的了解比较深的话可以改写的更优雅一些；如果库本身很复杂，改造起来很麻烦，那就直接加锁吧。</p>
-<h3 id="避免使用较高版本的glibc"><a href="#避免使用较高版本的glibc" class="headerlink" title="避免使用较高版本的glibc"></a>避免使用较高版本的glibc</h3><p>使用时发现由于线上机器的gilbc版本可能低于本地编译环境,而glibc升级非常麻烦且会引起一系列问题,所以尽量避免使用较高版本glibc提供的函数</p>
-<p>一种避免使用较高版本glibc的办法见(Linux程序兼容),适用于低版本glibc也有此函数的情况</p>
-<ul>
-<li>查看线上环境支持的glibc版本 <code>strings /lib64/libc.so.6 | grep GLIBC_</code></li>
-<li>查看编译出来的二进制库/程序引用的glibc版本,检查有无冲突,及冲突的glibc版本 <code>readelf -s $libname | grep -oP “GLIBC_[\d.]*” | sort | uniq</code></li>
-<li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
-<li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
-</ul>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
@@ -1750,7 +1816,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">12</span>
+          <span class="site-state-item-count">13</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1791,7 +1857,11 @@
         
           
         
-        <span class="site-state-item-count">15</span>
+          
+        
+          
+        
+        <span class="site-state-item-count">17</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
