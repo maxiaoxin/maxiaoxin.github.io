@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="这一章主要介绍关于在.java代码编译为.class文件时使用的一些优化技术。实际操作时一般用javac来实现，其编译过程大致分为3个过程：  解析和填充符号表 插入式注解处理器的注解处理过程 分析与字节码生成过程  这三个步骤的关系如下：  Javac编译动作入口是com.sun.tools.javac.main.JavaCompiler类，基本流程如下  解析与填充符号表词法和语法分析词法分析">
+<meta name="keywords" content="JVM,优化">
+<meta property="og:type" content="article">
+<meta property="og:title" content="JVM学习（7）编译期优化">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/09/16/jvm7/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="这一章主要介绍关于在.java代码编译为.class文件时使用的一些优化技术。实际操作时一般用javac来实现，其编译过程大致分为3个过程：  解析和填充符号表 插入式注解处理器的注解处理过程 分析与字节码生成过程  这三个步骤的关系如下：  Javac编译动作入口是com.sun.tools.javac.main.JavaCompiler类，基本流程如下  解析与填充符号表词法和语法分析词法分析">
+<meta property="og:locale" content="cn">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/jvm_compile_process.png">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/jvm_javac_flow.png">
+<meta property="og:updated_time" content="2019-09-16T13:08:08.144Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="JVM学习（7）编译期优化">
+<meta name="twitter:description" content="这一章主要介绍关于在.java代码编译为.class文件时使用的一些优化技术。实际操作时一般用javac来实现，其编译过程大致分为3个过程：  解析和填充符号表 插入式注解处理器的注解处理过程 分析与字节码生成过程  这三个步骤的关系如下：  Javac编译动作入口是com.sun.tools.javac.main.JavaCompiler类，基本流程如下  解析与填充符号表词法和语法分析词法分析">
+<meta name="twitter:image" content="https://maxiaoxin.github.io/images/jvm_compile_process.png">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/09/16/jvm7/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>JVM学习（7）编译期优化 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/16/jvm7/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">JVM学习（7）编译期优化
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-16 00:00:00 / Modified: 21:08:08" itemprop="dateCreated datePublished" datetime="2019-09-16T00:00:00+08:00">2019-09-16</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>这一章主要介绍关于在.java代码编译为.class文件时使用的一些优化技术。实际操作时一般用javac来实现，其编译过程大致分为3个过程：</p>
+<ol>
+<li>解析和填充符号表</li>
+<li>插入式注解处理器的注解处理过程</li>
+<li>分析与字节码生成过程</li>
+</ol>
+<p>这三个步骤的关系如下：</p>
+<p><img src="/images/jvm_compile_process.png" alt="javac编译顺序"></p>
+<p>Javac编译动作入口是<code>com.sun.tools.javac.main.JavaCompiler</code>类，基本流程如下</p>
+<p><img src="/images/jvm_javac_flow.png" alt="javac"></p>
+<h2 id="解析与填充符号表"><a href="#解析与填充符号表" class="headerlink" title="解析与填充符号表"></a>解析与填充符号表</h2><h3 id="词法和语法分析"><a href="#词法和语法分析" class="headerlink" title="词法和语法分析"></a>词法和语法分析</h3><p>词法分析是将源码的字符流转变为标记（token）集合的过程，词法分析由<code>com.sun.tools.javac.parser.Scanner</code>来实现。</p>
+<p>语法分析是根据token序列构造抽象语法树（abstract syntax tree，AST），它的每个节点代表一个语法结构（construct），语法分析由<code>com.sun.tools.javac.tree.JCTree</code>来实现。之后的操作都是基于AST。</p>
+<h3 id="填充符号表"><a href="#填充符号表" class="headerlink" title="填充符号表"></a>填充符号表</h3><p>填充符号表的过程对应上图中的<code>enterTrees()</code>，符号表（symbol table）是由一组符号地址和符号信息构成的表格，在各个编译阶段都会用到：语义分析时，需要根据符号表进行语义检查（如检查一个名字的使用是否和声明一致）和产生中间代码；在目标代码生成阶段，在对符号进行地址分配时需要用到符号表。</p>
+<p>这个阶段由<code>com.sun.tools.javac.comp.Enter</code>类来实现，其出口是一个待处理列表（to do list），包含了每一个编译单元的AST顶级节点，以及package-info.java（如果有的话）的顶级节点</p>
+<h2 id="注解处理器"><a href="#注解处理器" class="headerlink" title="注解处理器"></a>注解处理器</h2><p>JDK1.5后支持了注解（annotation），可以作用于运行期；JDK1.6后提供了一组插入式注解处理器的标准API在编译期间对注解进行处理，即允许开发者对编译器的行为做一定干涉。</p>
+<p>具体可以参考<a href="https://github.com/linxiaoyang/JSR269TEST" target="_blank" rel="noopener">实践JSR269关于编译期注解的使用且搞清Lombok实现原理</a>，注意如果是自己写的话，要依赖<code>$JAVA_HOME/lib/tools.jar</code>这个包，并且由于这个步骤在编译期而非运行期，调试时需要对类似<code>javac -processor ...</code>这样的命令进行调试。</p>
+<h2 id="语义分析与字节码生成"><a href="#语义分析与字节码生成" class="headerlink" title="语义分析与字节码生成"></a>语义分析与字节码生成</h2><p>得到AST不代表源码符合逻辑，因此需要再对其进行语义检查和分析，包括标注检查和控制流分析两个步骤，分别对应图1中<code>attribute()</code>和<code>flow()</code>方法</p>
+<h3 id="标注检查"><a href="#标注检查" class="headerlink" title="标注检查"></a>标注检查</h3><p>主要检查类似变量使用前是否被声明、变量与赋值之间的数据类型是否匹配、常量折叠等。常量折叠是针对能在编译期计算出来的常量进行计算和简化，减少运行期负担。相关的类是<code>com.sun.tools.javac.comp.Attr</code>和<code>com.sun.tools.javac.comp.Check</code>。</p>
+<h3 id="数据和控制流分析"><a href="#数据和控制流分析" class="headerlink" title="数据和控制流分析"></a>数据和控制流分析</h3><p>和类加载时控制流分析类似，可以检查出诸如程序局部变量在使用前是否赋值、方法的每条路径是否都有返回值、所有异常都被处理等。还有些只能在编译期检查出来，比如一个局部变量被声明为<code>final</code>，可能编译出来的.class文件会没有相关修饰符，而编译期可以检查这个变量是否被修改过。相关的类是<code>com.sun.tools.javac.comp.Flow</code>。</p>
+<h3 id="解语法糖"><a href="#解语法糖" class="headerlink" title="解语法糖"></a>解语法糖</h3><p>语法糖（syntactic sugar）是指编程语言中增加的某些语法，它对语言功能没有影响，但更方便书写。Java的语法糖比如泛型（类型擦除）、变长参数（传个数组进去）、自动拆箱/装箱（如<code>int</code>和<code>Integer</code>转换）。这些语法糖在编译期会被还原成基础的语法结构。相关的类是<code>com.sun.tools.javac.comp.TransTypes</code>和<code>com.sun.tools.javac.comp.Lower</code>。</p>
+<h4 id="类型擦除"><a href="#类型擦除" class="headerlink" title="类型擦除"></a>类型擦除</h4><p>JDK1.5后增加了泛型，不过java是伪泛型：比如<code>ArrayList&lt;Integer&gt;</code>和<code>ArrayList&lt;String&gt;</code>在java里是同一类，而在C#里是两个不同的类，java在编译后会把具体类型替换为Object，在相关位置加入强制类型转换代码。</p>
+<p>不过类型擦除只是对Code属性中的字节码进行擦除，Signature里还有泛型信息，因此可以通过反射得到参数化类型，比如</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl;</span><br><span class="line"><span class="keyword">import</span> java.lang.reflect.Method;</span><br><span class="line"><span class="keyword">import</span> java.util.List;</span><br><span class="line"><span class="keyword">import</span> java.util.Set;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">HelloWorld</span> </span>&#123;</span><br><span class="line">  <span class="keyword">private</span> &lt;T&gt; <span class="function"><span class="keyword">void</span> <span class="title">hello</span><span class="params">(List&lt;T&gt; a, Set&lt;Integer&gt; b)</span></span>&#123;</span><br><span class="line">    a.forEach(System.out::println);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    Class cls = HelloWorld.class;</span><br><span class="line">    Method method = cls.getDeclaredMethod(<span class="string">"hello"</span>, List.class, Set.class);</span><br><span class="line">    System.out.println(((ParameterizedTypeImpl)method.getGenericParameterTypes()[<span class="number">0</span>]).getActualTypeArguments()[<span class="number">0</span>]);</span><br><span class="line">    System.out.println(((ParameterizedTypeImpl)method.getGenericParameterTypes()[<span class="number">1</span>]).getActualTypeArguments()[<span class="number">0</span>]);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// T</span></span><br><span class="line"><span class="comment">// class java.lang.Integer</span></span><br></pre></td></tr></table></figure>
+
+<h4 id="自动装箱-拆箱和遍历循环"><a href="#自动装箱-拆箱和遍历循环" class="headerlink" title="自动装箱/拆箱和遍历循环"></a>自动装箱/拆箱和遍历循环</h4><p>这些解释起来比较简单，比如这样一段代码</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;Integer&gt; list = Arrays.asList(<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>);</span><br><span class="line">    <span class="keyword">int</span> s = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">for</span> (<span class="keyword">int</span> i : list)&#123;</span><br><span class="line">      s += i;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>可能会被翻译为</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;Integer&gt; list = Arrays.asList(<span class="keyword">new</span> Integer[]&#123;</span><br><span class="line">        Integer.valueOf(<span class="number">1</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">2</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">3</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">4</span>)&#125;);</span><br><span class="line">    <span class="keyword">int</span> s = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">for</span> (Iterator iter = list.iterator(); iter.hasNext();)&#123;</span><br><span class="line">      <span class="keyword">int</span> i = ((Integer)iter.next()).intValue();</span><br><span class="line">      s += i;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>当然自动拆箱/装箱里有些坑，比如各路面试里都特别喜欢考因为类似<code>IntegerCache</code>及其上下界，导致自动装箱后的引用相同等等。简单来说由于<code>Integer</code>等类型是不可变的，也就不用担心线程安全等问题，因此可以对一些经常出现的常量（比如<code>Integer.valueOf()</code>）这种的可以进行cache，比如<code>Integer</code>里默认会对<code>[-128, 127]</code>这个范围内的数字进行cache，避免每次因为<code>Integer.valueOf()</code>创建新的对象。不过<code>new Integer()</code>总会创建新的对象。</p>
+<p>另一个坑是循环时对数组进行操作，比如</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;String&gt; list = <span class="keyword">new</span> ArrayList&lt;&gt;();</span><br><span class="line">    list.add(<span class="string">"123"</span>);</span><br><span class="line">    list.add(<span class="string">"456"</span>);</span><br><span class="line">    list.add(<span class="string">"798"</span>);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">for</span> (String s : list)&#123;</span><br><span class="line">      list.remove(s);</span><br><span class="line">      System.out.println(s);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">// 报错java.util.ConcurrentModificationException</span></span><br></pre></td></tr></table></figure>
+
+<p>解语法糖后可以看到这种删除方式会导致迭代器不可用，因此需要改为</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (Iterator&lt;String&gt; iter = list.iterator(); iter.hasNext();)&#123;</span><br><span class="line">  System.out.println(iter.next());</span><br><span class="line">  iter.remove();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="条件编译"><a href="#条件编译" class="headerlink" title="条件编译"></a>条件编译</h4><p>Java默认如果检测到某条分支永远不会执行到，会拒绝编译，最典型的是<code>return;</code>后的语句。所以一般会用</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (<span class="keyword">true</span>)&#123;</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">&#125;</span><br><span class="line"><span class="comment">// ...</span></span><br></pre></td></tr></table></figure>
+
+<p>这样的方式来避免拒绝编译。实际上控制流分析后也会把相关代码忽略掉。</p>
+<p>另外比如内部类、枚举类、断言语句、<code>switch</code>枚举类和字符串、<code>try</code>的自动关闭资源等都是通过语法糖实现的。</p>
+<h3 id="字节码生成"><a href="#字节码生成" class="headerlink" title="字节码生成"></a>字节码生成</h3><p>字节码生成是javac编译过程的最后一个阶段，由<code>com.sun.tools.javac.jvm.Gen</code>类完成，除了将之前生成的信息转为字节码落盘外，还进行了少量代码添加和转换工作。比如把<code>&lt;cinit&gt;()</code>涉及到的语句合并在一起、将字符串加操作用<code>StringBuilder</code>或<code>StringBuffer</code>替换等。</p>
+<p>完成对语法树的遍历和调整后，会把填充了所有所需信息的符号表交给<code>com.sun.tools.javac.jvm.ClassWriter.writeClass()</code>来输出为字节码文件。至此编译结束。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/JVM/" rel="tag"># JVM</a>
+            
+              <a href="/tags/优化/" rel="tag"># 优化</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/09/10/jvm6/" rel="next" title="JVM学习（6）JVM字节码执行引擎">
+                  <i class="fa fa-chevron-left"></i> JVM学习（6）JVM字节码执行引擎
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#解析与填充符号表"><span class="nav-number">1.</span> <span class="nav-text">解析与填充符号表</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#词法和语法分析"><span class="nav-number">1.1.</span> <span class="nav-text">词法和语法分析</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#填充符号表"><span class="nav-number">1.2.</span> <span class="nav-text">填充符号表</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#注解处理器"><span class="nav-number">2.</span> <span class="nav-text">注解处理器</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#语义分析与字节码生成"><span class="nav-number">3.</span> <span class="nav-text">语义分析与字节码生成</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#标注检查"><span class="nav-number">3.1.</span> <span class="nav-text">标注检查</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#数据和控制流分析"><span class="nav-number">3.2.</span> <span class="nav-text">数据和控制流分析</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#解语法糖"><span class="nav-number">3.3.</span> <span class="nav-text">解语法糖</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#类型擦除"><span class="nav-number">3.3.1.</span> <span class="nav-text">类型擦除</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#自动装箱-拆箱和遍历循环"><span class="nav-number">3.3.2.</span> <span class="nav-text">自动装箱/拆箱和遍历循环</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#条件编译"><span class="nav-number">3.3.3.</span> <span class="nav-text">条件编译</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#字节码生成"><span class="nav-number">3.4.</span> <span class="nav-text">字节码生成</span></a></li></ol></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">14</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">18</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
