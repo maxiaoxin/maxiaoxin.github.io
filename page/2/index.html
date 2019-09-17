@@ -191,6 +191,105 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/java-dynamic-proxy/" class="post-title-link" itemprop="url">Java动态代理笔记</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:46:34" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。</p>
+<p>代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。</p>
+<p>在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实现细节和副作用。常见的使用代理的场合有：</p>
+<ol>
+<li>远程代理（Remote Proxy）：将一个远程对象包装成本地对象。WIKI的例子是ATM，ATM保存了银行信息，用户访问ATM等同于访问银行。</li>
+<li>虚拟代理（Virtual Proxy）：对象可以不实际存在，只有当访问时才会真正生成（也可以实现一部分）。参考延迟加载。</li>
+<li>保护代理（Protection Proxy）：在实际调用前/中/后进行资源安全性的检查。</li>
+<li>Copy-on-Write代理：虚拟代理的一种。把复制（克隆）拖延到只有在客户端需要时，才真正采取行动。</li>
+<li>Cache代理：为某一个目标操作的结果提供临时的存储空间，以便多个客户端可以共享这些结果。</li>
+<li>防火墙（Firewall）代理：保护目标，不让恶意用户接近。</li>
+<li>同步化（Synchronization）代理：使几个用户能够同时使用一个对象而没有冲突。</li>
+<li>智能引用（Smart Reference）代理：当一个对象被引用时，提供一些额外的操作，比如将对此对象调用的次数记录下来等。</li>
+</ol>
+<p>组合/继承都可以实现代理模式，当然静态代理在JAVA里使用继承会简单一些。即A’继承A，在每个父方法调用前后做一些操作。</p>
+<p>JAVA也支持动态代理，按我理解应该是组合模式。对于真实对象object，需要实现一个InvocationHandler接口，再通过Proxy.newProxyInstance(classLoader,interfaces,handler)来创建代理对象。</p>
+<ol>
+<li>classLoader: 生成的代理类所在的classLoader。（下次学习一下classLoader）。</li>
+<li>interfaces：想要代理的接口的集合。</li>
+<li>handler：我们刚才创建的handler，使用它来实际调用object，并做一些其他操作。</li>
+</ol>
+<p>第二个参数interfaces很重要，JAVA动态代理会动态创建一个类似<code>com.sun.proxy.$Proxy0</code>的类，这个类实现了所有的interfaces。在继承关系比较复杂的情况下，个人建议写死会比较好，使用object.getClass().getInterfaces()会出现一些意想不到的情况。比如有接口I1,I2,I3,C1实现了I1,I2，C2继承了C1，且实现了I3，那么一个C2的实例c2.getClass().getInterfaces()返回结果只有I3，无法代理I1和I2。</p>
+<p>在实现InvocationHandler接口时，我们需要实现invoke(proxy, method, args)方法，其中可能会调用method.invode(object,args)，当object因为某些原因报错时，method.invode会抛出InvocationTargetException异常：这与所预想抛出的异常不一致，从而导致上层调用者捕捉不到对应的异常。因此最好写成</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -274,105 +373,6 @@
 <li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
 <li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
 </ul>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/java-dynamic-proxy/" class="post-title-link" itemprop="url">Java动态代理笔记</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:46:34" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。</p>
-<p>代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。</p>
-<p>在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实现细节和副作用。常见的使用代理的场合有：</p>
-<ol>
-<li>远程代理（Remote Proxy）：将一个远程对象包装成本地对象。WIKI的例子是ATM，ATM保存了银行信息，用户访问ATM等同于访问银行。</li>
-<li>虚拟代理（Virtual Proxy）：对象可以不实际存在，只有当访问时才会真正生成（也可以实现一部分）。参考延迟加载。</li>
-<li>保护代理（Protection Proxy）：在实际调用前/中/后进行资源安全性的检查。</li>
-<li>Copy-on-Write代理：虚拟代理的一种。把复制（克隆）拖延到只有在客户端需要时，才真正采取行动。</li>
-<li>Cache代理：为某一个目标操作的结果提供临时的存储空间，以便多个客户端可以共享这些结果。</li>
-<li>防火墙（Firewall）代理：保护目标，不让恶意用户接近。</li>
-<li>同步化（Synchronization）代理：使几个用户能够同时使用一个对象而没有冲突。</li>
-<li>智能引用（Smart Reference）代理：当一个对象被引用时，提供一些额外的操作，比如将对此对象调用的次数记录下来等。</li>
-</ol>
-<p>组合/继承都可以实现代理模式，当然静态代理在JAVA里使用继承会简单一些。即A’继承A，在每个父方法调用前后做一些操作。</p>
-<p>JAVA也支持动态代理，按我理解应该是组合模式。对于真实对象object，需要实现一个InvocationHandler接口，再通过Proxy.newProxyInstance(classLoader,interfaces,handler)来创建代理对象。</p>
-<ol>
-<li>classLoader: 生成的代理类所在的classLoader。（下次学习一下classLoader）。</li>
-<li>interfaces：想要代理的接口的集合。</li>
-<li>handler：我们刚才创建的handler，使用它来实际调用object，并做一些其他操作。</li>
-</ol>
-<p>第二个参数interfaces很重要，JAVA动态代理会动态创建一个类似<code>com.sun.proxy.$Proxy0</code>的类，这个类实现了所有的interfaces。在继承关系比较复杂的情况下，个人建议写死会比较好，使用object.getClass().getInterfaces()会出现一些意想不到的情况。比如有接口I1,I2,I3,C1实现了I1,I2，C2继承了C1，且实现了I3，那么一个C2的实例c2.getClass().getInterfaces()返回结果只有I3，无法代理I1和I2。</p>
-<p>在实现InvocationHandler接口时，我们需要实现invoke(proxy, method, args)方法，其中可能会调用method.invode(object,args)，当object因为某些原因报错时，method.invode会抛出InvocationTargetException异常：这与所预想抛出的异常不一致，从而导致上层调用者捕捉不到对应的异常。因此最好写成</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
 
         
       
@@ -511,6 +511,80 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/linux-cmd-nc/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/linux-cmd-nc/" class="post-title-link" itemprop="url">linux传输命令</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:43:15" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nc -l -p 8210 &gt; demo.txt        <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写入文本文件</span></span><br><span class="line">nc -l -p 8210 &gt; demo.tar.bz2    <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写成压缩文件</span></span><br><span class="line">nc dest_ip 8210 &lt; demo.txt      <span class="comment"># 向ip为dest_ip的机器的8210端口发送demo.txt文件</span></span><br><span class="line">nc dest_ip 8210 &lt; $(tar -jcvf demo.tar.bz2 demo.txt) <span class="comment"># 压缩后发送</span></span><br></pre></td></tr></table></figure>
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/nginx-qps/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -563,80 +637,6 @@
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">tail -f access.log | awk -F <span class="string">'['</span> <span class="string">'&#123;print $2&#125;'</span> | awk <span class="string">'BEGIN&#123;key="";count=0&#125;&#123;if(key==$1)&#123;count++&#125;else&#123;printf("%s\t%d\r\n", key, count);count=1;key=$1&#125;&#125;'</span></span><br><span class="line">tail -f access.log | awk -F <span class="string">'['</span> <span class="string">'&#123;print $2&#125;'</span> | awk <span class="string">'&#123;print $1&#125;'</span> | uniq -c</span><br><span class="line">cat access.log | awk -F <span class="string">'['</span> <span class="string">'&#123;print $2&#125;'</span> | awk <span class="string">'&#123;print $1&#125;'</span> | sort | uniq -c |sort -k1,1nr</span><br></pre></td></tr></table></figure>
 
 
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/linux-cmd-nc/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/linux-cmd-nc/" class="post-title-link" itemprop="url">linux传输命令</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:43:15" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nc -l -p 8210 &gt; demo.txt        <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写入文本文件</span></span><br><span class="line">nc -l -p 8210 &gt; demo.tar.bz2    <span class="comment"># 在本机8210端口侦听TCP连接，将收到的数据写成压缩文件</span></span><br><span class="line">nc dest_ip 8210 &lt; demo.txt      <span class="comment"># 向ip为dest_ip的机器的8210端口发送demo.txt文件</span></span><br><span class="line">nc dest_ip 8210 &lt; $(tar -jcvf demo.tar.bz2 demo.txt) <span class="comment"># 压缩后发送</span></span><br></pre></td></tr></table></figure>
         
       
     </div>
