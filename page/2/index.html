@@ -191,6 +191,97 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/cheat1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/cheat1/" class="post-title-link" itemprop="url">页游辅助思路</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:40:53" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>其实我玩过的页游也就是舰C，这游戏最大的特点就是制作者恨不得让玩家每天996的肝游戏（如果玩家稍微有点追求），发展到现在可以说没辅助没法玩。不过这个游戏也可以很简单的进行辅助操作，因为页面之间变化不大，操作简单：玩家也就只能点点鼠标。</p>
+<p>原理简单来说还是模拟人类玩家的操作方式：根据页面图像来进行下一步操作。</p>
+<p>页面图像获取一般还是用GetPixel之类的API。在windows上，可能用DX系列的API更好一些，但调用实在太复杂，且兼容性比较差。话说自从舰C改版到HTML5后，基本只能用chrome或者chromium内核来玩了，而这个浏览器似乎不支持PrintWindow等可以通过窗口DC直接获取截图的方法——或者说DX窗口都不支持PrintWindow，导致我只能用全屏截图的API或者类似的API，而不能把游戏窗口隐藏到后端：毕竟挂机的时候也希望干点别的事。个人猜测可能是因为DX截图是基于显示设备的，没办法获取被隐藏的窗口。</p>
+<p>图像获取后的另一个问题是”判断“，往大了说是图像识别，但通常只要判断子图是否一致，甚至某几个像素是否一致就可以了。按键精灵这种外挂似乎可以通过子图识别来确定，不过我觉得舰C不太需要这么高端的功能，毕竟几乎所有按钮出现的位置都不会变，因此不需要去”找“，而只需要在特定位置”判断“某个子图是否出现即可。</p>
+<p>模拟操作相对而言很简单，获取到窗口句柄后PostMessage就可以了。</p>
+<p>”输入“和”输出“手段就这样愉快的决定了，接下来是辅助器的设计思路。由于舰C这种页游的页面显示变化很小，场景间处理逻辑差别很大，关联很小，故可以用状态机模型来进行编程：维持一个context，将每一个场景视为”state“，出现某个图像/自定义函数作为”condition“，如果满足条件则进行状态切换/改变上下文/进行操作。舰C的context比较好获得，大部分可以通过游戏内部数据获取，可以通过截取解析HTTP包获得，或者干脆用现成的工具74EO解析。一般的页游也差不多，如果不想解析包，也可以直接处理图像获得（比如血条什么的），但毕竟不如直接解包来的准确。</p>
+<p>举个例子，比如在舰C里刷闪，涉及到的场景大致有主页面、队伍编成页面、补给页面、地图选择页面、战斗页面，切换条件分别为：</p>
+<ul>
+<li>主页面：如果编成未结束进入编程场景；如果没补给完则通过补给按钮进入补给场景；否则进入地图选择场景</li>
+<li>队伍编成场景：选择要刷闪的船，选完后返回主页面。没有要刷闪的船则在返回后跳出。</li>
+<li>补给场景：能补给则补给，补给完则返回主页面。</li>
+<li>地图选择场景：进入1-1，切换至战斗场景。</li>
+<li>战斗场景：不停出击，直至返回主页面。<br>每个场景内的操作相对简单，比如在战斗场景里，如果出现阵型选择则点击单纵（实际上刷闪因为只有三艘船不会选择阵型），出现战后结算则随便点一下，出现是否前进则点击前进，出现是否入夜则点击不入夜。</li>
+</ul>
+<p>可以思考一下如何在刷闪的时候收发远征？</p>
+<p>在构筑好状态机后，我们需要两个协程，协程A每隔一段时间（比如3秒）截图，将截图放入上下文，控制权交给协程B；协程B跑上面这个状态机，根据上下文进行一轮条件判断和操作，再交给协程A。</p>
+<p>我一开始的代码逻辑是顺序的：判断图像-进行操作-判断图像-进行操作。。。。这种编程思路的坏处是，如果某个判断/操作失败了（比如窗口没收到点击消息、某个图片迟迟没弹出等），需要进行异常处理的逻辑会变得非常复杂。而页游中同一场景中的条件判断几乎不重复，即使某次判断/操作失败了也可以再一次正确处理。另外，如果游戏机制改变了，需要插入的逻辑也会比较简单。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -705,7 +796,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">15</span>
+          <span class="site-state-item-count">16</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -752,7 +843,9 @@
         
           
         
-        <span class="site-state-item-count">18</span>
+          
+        
+        <span class="site-state-item-count">19</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
