@@ -191,6 +191,96 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/24/jvm-exception/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/09/24/jvm-exception/" class="post-title-link" itemprop="url">JVM和异常处理</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-24 00:00:00 / Modified: 21:00:45" itemprop="dateCreated datePublished" datetime="2019-09-24T00:00:00+08:00">2019-09-24</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>之前读《深入理解JVM》的时候，把异常处理那段跳过去了，现在补上</p>
+<p>Java代码里的<code>try{}catch(){}finally{}</code>很容易理解，而编译为.class文件后结构也是类似的，只是多了一个Exception table，比如：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">private</span> <span class="keyword">static</span> String <span class="title">foo</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> IOException </span>&#123;</span><br><span class="line">    <span class="keyword">try</span>&#123;</span><br><span class="line">      JSONArray array = <span class="keyword">new</span> JSONArray(args);</span><br><span class="line">      <span class="keyword">return</span> array.toString();</span><br><span class="line">    &#125; <span class="keyword">catch</span> (JSONException e)&#123;</span><br><span class="line">      <span class="keyword">throw</span> <span class="keyword">new</span> IOException(e);</span><br><span class="line">    &#125; <span class="keyword">catch</span> (Exception e)&#123;</span><br><span class="line">      e.printStackTrace(System.out);</span><br><span class="line">    &#125; <span class="keyword">catch</span> (Throwable t)&#123;</span><br><span class="line">      t.printStackTrace(System.err);</span><br><span class="line">    &#125;  <span class="keyword">finally</span> &#123;</span><br><span class="line">      System.out.println(<span class="string">"finally"</span>);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">null</span>;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>会被编译为</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br></pre></td><td class="code"><pre><span class="line">private static java.lang.String foo(java.lang.String[]) throws java.io.IOException;</span><br><span class="line">    descriptor: ([Ljava/lang/String;)Ljava/lang/String;</span><br><span class="line">    flags: ACC_PRIVATE, ACC_STATIC</span><br><span class="line">    Code:</span><br><span class="line">      stack=3, locals=4, args_size=1</span><br><span class="line">         0: new           <span class="comment">#2                  // class org/json/JSONArray</span></span><br><span class="line">         3: dup</span><br><span class="line">         4: aload_0</span><br><span class="line">         5: invokespecial <span class="comment">#3                  // Method org/json/JSONArray."&lt;init&gt;":(Ljava/lang/Object;)V</span></span><br><span class="line">         8: astore_1</span><br><span class="line">         9: aload_1</span><br><span class="line">        10: invokevirtual <span class="comment">#4                  // Method org/json/JSONArray.toString:()Ljava/lang/String;</span></span><br><span class="line">        13: astore_2</span><br><span class="line">        14: getstatic     <span class="comment">#5                  // Field java/lang/System.out:Ljava/io/PrintStream;</span></span><br><span class="line">        17: ldc           <span class="comment">#6                  // String finally</span></span><br><span class="line">        19: invokevirtual <span class="comment">#7                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V</span></span><br><span class="line">        22: aload_2</span><br><span class="line">        23: areturn</span><br><span class="line">        24: astore_1</span><br><span class="line">        25: new           <span class="comment">#9                  // class java/io/IOException</span></span><br><span class="line">        28: dup</span><br><span class="line">        29: aload_1</span><br><span class="line">        30: invokespecial <span class="comment">#10                 // Method java/io/IOException."&lt;init&gt;":(Ljava/lang/Throwable;)V</span></span><br><span class="line">        33: athrow</span><br><span class="line">        34: astore_1</span><br><span class="line">        35: aload_1</span><br><span class="line">        36: getstatic     <span class="comment">#5                  // Field java/lang/System.out:Ljava/io/PrintStream;</span></span><br><span class="line">        39: invokevirtual <span class="comment">#12                 // Method java/lang/Exception.printStackTrace:(Ljava/io/PrintStream;)V</span></span><br><span class="line">        42: getstatic     <span class="comment">#5                  // Field java/lang/System.out:Ljava/io/PrintStream;</span></span><br><span class="line">        45: ldc           <span class="comment">#6                  // String finally</span></span><br><span class="line">        47: invokevirtual <span class="comment">#7                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V</span></span><br><span class="line">        50: goto          83</span><br><span class="line">        53: astore_1</span><br><span class="line">        54: aload_1</span><br><span class="line">        55: getstatic     <span class="comment">#14                 // Field java/lang/System.err:Ljava/io/PrintStream;</span></span><br><span class="line">        58: invokevirtual <span class="comment">#15                 // Method java/lang/Throwable.printStackTrace:(Ljava/io/PrintStream;)V</span></span><br><span class="line">        61: getstatic     <span class="comment">#5                  // Field java/lang/System.out:Ljava/io/PrintStream;</span></span><br><span class="line">        64: ldc           <span class="comment">#6                  // String finally</span></span><br><span class="line">        66: invokevirtual <span class="comment">#7                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V</span></span><br><span class="line">        69: goto          83</span><br><span class="line">        72: astore_3</span><br><span class="line">        73: getstatic     <span class="comment">#5                  // Field java/lang/System.out:Ljava/io/PrintStream;</span></span><br><span class="line">        76: ldc           <span class="comment">#6                  // String finally</span></span><br><span class="line">        78: invokevirtual <span class="comment">#7                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V</span></span><br><span class="line">        81: aload_3</span><br><span class="line">        82: athrow</span><br><span class="line">        83: aconst_null</span><br><span class="line">        84: areturn</span><br><span class="line">      Exception table:</span><br><span class="line">         from    to  target <span class="built_in">type</span></span><br><span class="line">             0    14    24   Class org/json/JSONException</span><br><span class="line">             0    14    34   Class java/lang/Exception</span><br><span class="line">             0    14    53   Class java/lang/Throwable</span><br><span class="line">             0    14    72   any</span><br><span class="line">            24    42    72   any</span><br><span class="line">            53    61    72   any</span><br></pre></td></tr></table></figure>
+
+<p>异常表对应了<code>try-catch</code>语句中的异常处理部分，比如<code>0    14    24   Class org/json/JSONException</code>表示如果在第0到第14行字节码运行过程中，如果出现<code>JSONException</code>异常，则跳转至34行；而对于<code>finally</code>语句，则是简单的将相关代码复制了3份，放到各个catch语句块后面，最后加一个<code>goto</code>指令跳转到<code>try-catch-finally</code>语句块后。（这种<code>goto</code>的用法和C对异常结果的处理方法非常类似）</p>
+<p>异常一般有以下几种产生方式：</p>
+<ol>
+<li><code>athrow</code>指令抛出异常</li>
+<li>执行/调用过程中同步产生的异常，比如OOM、除0错</li>
+<li>由执行环境（比如JVM）产生的异常，和代码执行本身没有关系，比如一个线程对另一个线程执行<code>Thread.stop()</code>操作</li>
+</ol>
+<p>关于JVM如何捕获和处理异常，可以参考<a href="https://www.zhihu.com/question/53054894/answer/133229470" target="_blank" rel="noopener">读完CSAPP异常控制流之后，对Java异常机制的疑惑? - RednaxelaFX的回答 - 知乎</a>，简单来说，<code>athrow</code>出来的异常JVM总是能想办法捕获的，而对于系统报错，可以先向OS注册一个signal handler，并转换为Java层面异常抛出。</p>
+<p>在捕获到异常后，JVM会去顺序查找异常表，如果from、to、type都满足，就使用那个handler处理；如果始终无法正确处理，则弹出栈帧，重复这一过程；如果到最后都没有正确处理，则本线程终止。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/23/jvm10/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1745,179 +1835,6 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/26/megastore/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/26/megastore/" class="post-title-link" itemprop="url">megastore阅读笔记</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-26 00:00:00" itemprop="dateCreated datePublished" datetime="2019-08-26T00:00:00+08:00">2019-08-26</time>
-            </span>
-          
-            
-
-            
-              <span class="post-meta-item">
-                <span class="post-meta-item-icon">
-                  <i class="fa fa-calendar-check-o"></i>
-                </span>
-                <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-08-30 16:38:22" itemprop="dateModified" datetime="2019-08-30T16:38:22+08:00">2019-08-30</time>
-              </span>
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>之前粗略浏览过一遍megastore论文，对其中数据模型有点印象，但后面没太细看，今天补上。</p>
-<h2 id="基本架构"><a href="#基本架构" class="headerlink" title="基本架构"></a>基本架构</h2><p>Megastore的目标是为了服务交互式线上服务，比如gmail、picasa。当然google后来已经改用spanner&amp;F1了。基本架构如下图所示。</p>
-<p><img src="/images/megastore1.png" alt="图1"></p>
-<p>Megastore将数据分为一个个Entity Group（怎么分得看具体业务）。每个数据中心都保存了完整的数据副本（为了便于理解，其实按说也不一定）。在同一数据中心内部，如果在同一个EG里的事务，可以只用一阶段提交即可保证ACID语义；如果是跨EG的事务，可以用两阶段提交，也可以用消息队列，如下图所示。</p>
-<p><img src="/images/megastore2.png" alt="图2"></p>
-<p>而跨数据中心则基于paxos进行备份，这意味着可以直接从本地数据中心进行的读操作是有效的（且通常是最新的），但写操作非常的重。我之前读到这的时候很奇怪，毕竟大多数情况写进某个DC再慢慢传播就行了，但megastore确实是这么干的，只能认为这些DC之间的带宽和延迟都非常给力。</p>
-<h2 id="数据模型"><a href="#数据模型" class="headerlink" title="数据模型"></a>数据模型</h2><h3 id="物理布局"><a href="#物理布局" class="headerlink" title="物理布局"></a>物理布局</h3><p>Megasotre的数据模型介于RDBMS和NoSQL之间，spanner的论文没有详细描述数据模型，但估计和megastore差不多。一方面，megastore要求数据的每个字段是强类型的（具体格式很像protobuf，毕竟是google自家的产品），另一方面可能也和megastore依赖于BigTable有关，很难完全支持各种联表查询。考虑到megastore主要用于读远多于写的情况，故采用pre-join的方式，将读代价转移到写上（其实megastore采用paxos保持每个集群数据总是最新/较新也是为了保证高可读性），如下图所示。</p>
-<p><img src="/images/megastore3.png" alt="图3"></p>
-<p>Megastore的table分为root table和child table两种，child table必须要引用其root table的某个键（必须是主键？）：那么，一个entity group包含了一系列entity，每个entity有root table及其sub table中的数据。对于每个entity，具体数据被存放到Bigtable中的某一行，其所有主键按字符串顺序连接起来作为BigTable的row key，其他列则保存在column中。由于child table引用了root  table的某个键，因此child table的数据也选择这个键作为主键，而利用BigTable的row key按字典序存放可以保证这些数据紧邻，如下图所示。当然也可以声明为SCATTER，这样的entity会在rowkey前加两个字节的hash code，以避免热点。</p>
-<p><img src="/images/megastore4.png" alt="图4"></p>
-<p>其实我觉得还是有问题，比如root table的主键是K1,K2,K3，child table引用了K2,K3，主键是K4。假如有两个root entity A:(a1,a2,a3)和B:(b1,b2,b3)，其中a2=b2,a3=b3；一个child entity C(c4)，有属性(a2,a3)，需要在BigTable里加两行(a1-a2-a3-c4)和(b1-a2-a3-c4)？修改的时候也要对这两行同时修改？或者又建了一层索引？又或者完全不管(直接用c4当row key)？看了下tidb的实现，主键还是就这样连接起来，但tidb不支持foreign key，所以也没法参考。</p>
-<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">CREATE</span> <span class="keyword">TABLE</span> <span class="keyword">IF</span> <span class="keyword">NOT</span> <span class="keyword">EXISTS</span> <span class="string">`test_primary_keys`</span>(</span><br><span class="line">    <span class="string">`k1`</span> <span class="built_in">VARCHAR</span>(<span class="number">100</span>),</span><br><span class="line">    <span class="string">`k2`</span> <span class="built_in">VARCHAR</span>(<span class="number">100</span>),</span><br><span class="line">    <span class="string">`k3`</span> <span class="built_in">VARCHAR</span>(<span class="number">100</span>),</span><br><span class="line">    <span class="string">`k4`</span> <span class="built_in">INT</span>,</span><br><span class="line">   PRIMARY <span class="keyword">KEY</span> ( <span class="string">`k1`</span>,  <span class="string">`k2`</span>, <span class="string">`k3`</span>)</span><br><span class="line">)</span><br><span class="line"></span><br><span class="line"><span class="keyword">insert</span> <span class="keyword">into</span> test_primary_keys <span class="keyword">values</span>(<span class="string">"hello"</span>, <span class="string">"my"</span>, <span class="string">"tidb"</span>, <span class="number">456</span>);</span><br></pre></td></tr></table></figure>
-
-<p>实际存储到tikv里的数据是</p>
-<blockquote>
-<p>key: zt\200\000\000\000\000\000\000\377-_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372<br>    write cf value: MvccWrite { r_type: Put, start_ts: 410775417252216833, commit_ts: 410775417278431233, short_value: [8, 2, 2, 10, 104, 101, 108, 108, 111, 8, 4, 2, 4, 109, 121, 8, 6, 2, 8, 116, 105, 100, 98, 8, 8, 8, 144, 7], unknown_fields: UnknownFields { fields: None }, cached_size: CachedSize { size: 0 } }</p>
-</blockquote>
-<p>同时，在Root Table的BigTable单行中，还存储了transaction,replication元数据以及Transaction Log。下图是整个MegaTable Table在BigTable之上的布局图。</p>
-<p><img src="/images/megastore6.png" alt="图6"></p>
-<h3 id="二级索引"><a href="#二级索引" class="headerlink" title="二级索引"></a>二级索引</h3><p>二级索引主要分为两种：local index和global index。所谓的local和global取决于是否跨EG，如图3中的PhotosByTime和PhotosByTag。Local index实际上被放在同一个entity group里，可以保证强ACID语义。Global index可以在不知道具体哪个EG的情况下找到特定的entity，但更新可能会不及时。此外Megastore还支持一些特性：</p>
-<h4 id="存储子句（storing-clause）"><a href="#存储子句（storing-clause）" class="headerlink" title="存储子句（storing clause）"></a>存储子句（storing clause）</h4><p>一般索引用法是先通过索引确定哪一行，再访问这一行得到结果。Storing clause允许把一些数据保存到索引里，比如图3中的PhotosByTag.thumbnail_url。</p>
-<p>不是很确定megastore是怎么存index的。但在tidb里，索引其实也是一行数据，和普通的数据行没有本质区别，每次更新时都会影响所有索引行。那么往这些行里加点附加数据加速查询，也很是很自然的想法。</p>
-<h4 id="重复索引（repeated-indexes）"><a href="#重复索引（repeated-indexes）" class="headerlink" title="重复索引（repeated indexes）"></a>重复索引（repeated indexes）</h4><p>如图3中的PhotosByTag.tag，每个tag都有个索引。很正常的想法，毕竟一张图可能有很多个tag，总不能把所有tag连接起来当索引吧。</p>
-<h4 id="内联索引（inline-indexes）"><a href="#内联索引（inline-indexes）" class="headerlink" title="内联索引（inline indexes）"></a>内联索引（inline indexes）</h4><p>Local index的一种，个人理解是同一个EG里foreign key的反向映射，保存在root table里新加的几列里。如下图所示，PhotosByTime.user_id是User表的主键，因此在索引PhotosByTime(user_id, time)时，可以在user_id行，PhotosByTime.time列，找到对应的photo_id。</p>
-<p><img src="/images/megastore5.png" alt="图5"></p>
-<p>总的来说创建索引后要么新建一行，要么新建一列，具体怎么做还得看情况。</p>
-<h2 id="事务处理和并发控制"><a href="#事务处理和并发控制" class="headerlink" title="事务处理和并发控制"></a>事务处理和并发控制</h2><p>如前所述，同一个EG内的事务处理保持严格的ACID语义，和大多数数据库一样，写数据前会写一条WAL（write-ahead  log），然后再按照这个WAL落盘。</p>
-<p>又因为BigTable天然的支持MVCC（multiversion concurrency control），所以只要在写事务时加上对应的timestamp就自然可以让megastore支持MVCC，这也意味着可以不用加锁就能快照读，甚至写操作也不一定要加锁。</p>
-<p>Megastore提供了三种级别读：当前读（current），快照读（snapshot），立即读（inconsistent）。Megastore的做法是对于current读，要求当前entity group内（原文是the scope of a single entity group，应理解为要读的行所涉及的事务？）所有已committed的写操作落盘，然后用最近一次提交的事务所带的timestamp去读；而对于快照读就没有要求落盘操作了，可以认为是用最后一次已成功落盘的事务的timestamp去读。立即读就是不管timestamp直接读，显然这么读最快，对一致性要求不高的时候可以这么来。</p>
-<p>所有的写事务都需要先进行一次current read，以此确定下一个log的position，这点非常重要。接着生成一个足够大的timestamp，遵循paxos协议尝试追加log。如前文所属，megastore主要用于读远多余写的情况，因此采用乐观锁：如果多个写操作向同一个log position写，只有一个能成功，其他失败的写操作会推倒重来一遍。完整的事务流程如下：</p>
-<ol>
-<li>Current read：获得最近一次事务的timestamp和log position</li>
-<li>应用逻辑：读取BigTable数据，然后把所有写操作合并到一个log entry里</li>
-<li>提交：遵循paxos协议，把log追加到日志队列里</li>
-<li>生效：将日志中的修改写到BigTable的对应行，并修改相关索引</li>
-<li>清理：清理掉不需要的数据</li>
-</ol>
-<p>实际上走完第三步就可以通知客户端写成功了，毕竟理论上日志被committed后等价于写成功，当然megastore会尽可能让距离客户端最近的副本生效这个事务，确保用户能读到最新的修改。</p>
-<p>之前提到megastore支持跨entity group事务，可以用消息队列或者二阶段提交实现，见图2。消息队列简单来说就是先在EG1上进行事务，然后EG1将事务打包成一个消息塞到EG2的队列里，EG2原子的消费这个消息，事务从而继续在EG2上执行。论文上没更详细的讲这部分，比如如果事务跨了三个EG该怎么发送消息？EG之间来回读、来回写呢？一个事务在这三个EG上timestamp是否要保持一致？二阶段提交应该就是先拿写锁再写。</p>
-<h2 id="副本同步"><a href="#副本同步" class="headerlink" title="副本同步"></a>副本同步</h2><p>副本同步是megastore的核心，它使用了一个基于paxos的低延迟的复制策略，保证各个集群的副本是一致的：显然，写操作需要至少在一个quorum数量的数据中心上commit才算成功，这也意味着一个写操作几乎要把所有DC跑一遍。当然，严格的写操作可以保证一个current read能有以下保证：</p>
-<ol>
-<li>一旦一个write成功，那么这个时刻之后的current read一定能读到这个write（可见性）</li>
-<li>一旦某个current read读到一个write，那么之后的读操作都可以读到这个write（持久性）</li>
-</ol>
-<h3 id="副本架构"><a href="#副本架构" class="headerlink" title="副本架构"></a>副本架构</h3><p>首先megastore允许每个position的log彼此独立，且log可以有空洞，这个和raft不太一样。下面这张图列出了大多数可能的日志冲突的情况。按我理解，日志冲突时具体恢复成哪个版本也说不定，和paxos运行有关，比如102，如果δ的proposal_id足够高，γ又没抢到更高的proposal_id，可能到最后会以δ为准。</p>
-<p><img src="/images/megastore9.png" alt="图9"></p>
-<p>一般来说副本应该包括log和具体数据，但实际上paxos要求多个acceptor只是为了达成一致，所以可以让一些副本只保留log信息（这类副本称为witness）。此外，有时候也不太需要特别新的副本，只要保留某一时刻强一致性的数据就可以支持read，这类副本称为read-only副本。总的来说，megastore的架构如下图所示，论文描述的是“Each application server has a designated local replica”，应理解为每个应用都指定了一个本地副本，然后通过megastore library来和其他副本进行同步。</p>
-<p><img src="/images/megastore8.png" alt="图8"></p>
-<h3 id="Read"><a href="#Read" class="headerlink" title="Read"></a>Read</h3><p>之前提到，write操作需要先进行一次current read，从而决定write的timestamp，设这个timestamp为t0。那么，对于t&lt;t0的快照读，write<sub>t0</sub>是一定不会看到的；write<sub>t0</sub>被commit后，对于current read，它的timestamp一定&gt;t0，且要求write<sub>t0</sub>落盘后才能继续，因此current read不会读到写到一半的数据。故current read的隔离级别至少是可重复读的。类似的，由于snapshot读会选择最后一个落盘的事务的timestamp读，而一个事务落盘意味着它之前的事务也落盘了，故snapshot读也至少是可重复读的。</p>
-<p>显然，如果写操作非常少的情况下，我们可以直接从任意副本读取最新数据，不需要RPC。那么问题就在于如何判断一个副本是最新的？为了解决这个问题，对于一个特定的entity集合，Megastore在每个DC都起了一个coordinator的服务，来管理这个entity集合内的副本状态。更准确的说，coordinator维持了一个最新的副本列表，如果某个写操作被某个副本拒绝，那么这个副本上的coordinator就会把对应的entity group key移除，这一过程称为invalidation。</p>
-<p>完整的current read流程如下：</p>
-<ol>
-<li>本地查询（query local）：查询本地的coordinator确定本地副本是否最新</li>
-<li>寻找log position（find position）确定最高的可能的已被commited的log position，然后选择一个已经成功应用这个log的副本，<ul>
-<li>a. 如果1已确定本地副本是最新的，那么直接以最后一个已committed的事务的timestamp读本地副本即可。</li>
-<li>b. 如果本地副本不是最新的，或者2a超时了，那么会发起一次majority read（paxos保证多数派副本是一致的），找到大多数副本中最大的Log Position信息以及Timestamp信息，然后选择一个通常能快速响应的Replica或者是数据最新的Replica去读。</li>
-</ul>
-</li>
-<li>数据追赶（catch up）：当知道本地副本已经不是最新，且在2b中选择了一个副本的情况下，会尝试补全数据：<ul>
-<li>a. 对于某个position，如果选定的副本能确定已经有共识值的情况下，就按共识值填，不确定的话再找个副本接着读；如果都确定不了，则用no-op或者之前某个候选值填充这个position。</li>
-<li>b. 当所有log被补齐后，依次apply这些log</li>
-</ul>
-</li>
-<li>校验（validate）：如果选择了本地副本且之前不是最新的，那么通知coordinator，(entity group, replica)已更新至最新，且通知所有相关的write操作该副本部分已更新。</li>
-<li>数据查询（query data）：使用已知的最大timestamp去读已选中的副本，如果这个副本已过期，那么再找个副本执行一遍catch up</li>
-</ol>
-<p>其中1和2a可以并发执行，时序流程图如下。</p>
-<p><img src="/images/megastore10.png" alt="图10"></p>
-<h3 id="Write"><a href="#Write" class="headerlink" title="Write"></a>Write</h3><p>可以看到，current read可以得到下一个可用的log position，最新的timestamp，以及下一个leader副本。因此Write操作会先进行一次current read，然后去竞争写这个position log。在write被committed并准备apply前，需要所有集群的副本，要么接受这个write，要么对应的coordinator失效相关的entity。完整的write流程如下：</p>
-<ol>
-<li>请求Leader（ Accept Leader）：请求leader将自己的提议的值作为0号提议，如果成功转3</li>
-<li>准备（Prepare）：即basic paxos prepare阶段，找到有最大proposal_id的value，并生成一个更大的proposal_id去提交</li>
-<li>接受（Accept）：即basic paxos accept阶段。如果失败则转2。</li>
-<li>失效（Invalidate）：要求所有没接受这个值的副本上的coordinator对相关entity进行invalidate处理</li>
-<li>落盘（Apply）：在尽可能多的副本上落实这个log，如果选中的值和初始值不同，则报一个conflict error</li>
-</ol>
-<p>其实整个流程就是paxos，其中第一阶段是fast write，时序流程图如下。值得注意的是，一般数据库的commit point和visibility point一样，即一旦一个write被committed，用户就可以看到相关变更。而在megastore里，commit point在3，而visibility  point则在4。至于leader的选择，一般会按照某个启发式规则来确定，比如某个地区的application写操作比较多，那么离这些地方最近的副本就可以被选为leader。显然，如果leader一直有效且各个副本响应的足够快，那么整个写操作就退化为master-slave架构；如果leader总是挂，那么整个过程就退化为basic paxos流程。</p>
-<p><img src="/images/megastore11.png" alt="图11"></p>
-<h3 id="Coordinator"><a href="#Coordinator" class="headerlink" title="Coordinator"></a>Coordinator</h3><p>最后一个问题是coordinator，因为几乎所有的读写请求都要过coordinator，且对整个系统的正确性有决定性的影响，所以megastore把coordinator做成一个轻量级、无状态的服务，且只有coordinator拿到过半数的chubby锁时才被认为有效。如果没拿到足够多的锁，那么coordinator就认为所有entity group都过期了。如果一个coordinator突然挂了（比如失去了锁），那么在这个副本上的current read和write都得等coordinator重新上线后才能跑，但实际上coordinator宕机恢复期间，客户端可以其他副本进行current read和write操作。</p>
-<p>由于megastore允许乱序log，对于position n,m，n&gt;m，如果m处日志写入失败而n写入成功，那么coordinator会报一个crash。不过我没太看懂coordinator检测crash的机制，原文如下。</p>
-<blockquote>
-<p>We detect crashes using a unique epoch number for each incarnation of the coordinator: validates are only allowed to modify the coordinator state if the epoch remains unchanged since the most recent read of the coordinator.</p>
-</blockquote>
-<p>其实想也知道megastore的写操作异常的重，吞吐量肯定不会高，</p>
-<h2 id="参考资料"><a href="#参考资料" class="headerlink" title="参考资料"></a>参考资料</h2><ul>
-<li><a href="/files/Megastore.pdf">原文</a></li>
-<li>Google Megastore分布式存储技术全揭秘：<a href="https://www.cnblogs.com/yako/archive/2011/02/18/1957790.html" target="_blank" rel="noopener">https://www.cnblogs.com/yako/archive/2011/02/18/1957790.html</a></li>
-<li>Google-MegaStore的解读：<a href="https://www.iteye.com/blog/57832638-2028003" target="_blank" rel="noopener">https://www.iteye.com/blog/57832638-2028003</a></li>
-<li>Google Megastore读写的架构分析：<a href="https://www.oipapio.com/cn/article-1701115" target="_blank" rel="noopener">https://www.oipapio.com/cn/article-1701115</a></li>
-<li>Megastore详解：<a href="http://www.nosqlnotes.com/tag/megastore/" target="_blank" rel="noopener">http://www.nosqlnotes.com/tag/megastore/</a></li>
-</ul>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
@@ -1967,7 +1884,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">18</span>
+          <span class="site-state-item-count">19</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -2024,7 +1941,9 @@
         
           
         
-        <span class="site-state-item-count">23</span>
+          
+        
+        <span class="site-state-item-count">24</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
