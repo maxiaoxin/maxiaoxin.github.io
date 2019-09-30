@@ -191,6 +191,138 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/29/redis-read1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/09/29/redis-read1/" class="post-title-link" itemprop="url">redis学习（1） 字节流、链表和字典</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-29 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-29T00:00:00+08:00">2019-09-29</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-30 18:46:20" itemprop="dateModified" datetime="2019-09-30T18:46:20+08:00">2019-09-30</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>还是对着《Redis设计与实现》看，不过由于redis源码比较短，可以对比着看源代码。</p>
+<p>Redis源码可以在<a href="https://redis.io/download" target="_blank" rel="noopener">官网</a>找，目前最新的stable版是5.0.5。不过如果是在Clion里看的话最好还是搞成cmake工程比较方便，可以参考<a href="https://github.com/Nov11/redis-4.0.2-with-cmakelist-for-reading-code-in-clion" target="_blank" rel="noopener">redis-4.0.2-with-cmakelist-for-reading-code-in-clion</a>，把<a href="/files/CMakeLists.txt">CMakeLists.txt</a>扔到工程目录下，然后针对5.0.5修改一下。</p>
+<p>Redis支持的数据结构包括字符串、链表、字典、跳表、整数集合、压缩列表</p>
+<h2 id="字符串-字节流"><a href="#字符串-字节流" class="headerlink" title="字符串/字节流"></a>字符串/字节流</h2><p>在<code>sds.h</code>中定义，类似</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> __<span class="title">attribute__</span> ((__<span class="title">packed__</span>)) <span class="title">sdshdr16</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint16_t</span> len; <span class="comment">// 字符串长度，可以用O(1)时间获得字符串长度</span></span><br><span class="line">    <span class="keyword">uint16_t</span> alloc; <span class="comment">// 一共申请了多少字节的内存</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> flags; <span class="comment">// 用来区分sdshdr版本</span></span><br><span class="line">    <span class="keyword">char</span> buf[]; <span class="comment">// 指向字符串的数组，简单来说redis的字符串和正常c字符串类似，也是以`\0`结尾，故兼容c标准库字符串函数</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>首先要说一下c的变长数组（flexible array），定义为变长数组后，这个结构体的长度实际上就可以是不定长且连续的。显然这种struct成员只能放在最后定义，用来处理流之类的不定长数据非常方便。</p>
+<p>严格来说<code>sdshdr</code>不是字符串而是字节流，因为字节流是可以在中间包含<code>\0</code>的，而c风格字符串不可以。</p>
+<p>redis字符串正常用起来和普通c字符串类似。但是当长度发生变化时，如果<code>len &lt; alloc</code>，则可以先尝试从buf里分配，从而避免频繁申请/释放内存；<code>flags</code>则是用来区分字符串版本，因为<code>len</code>和<code>alloc</code>本身的长度可以为8、16、32、64bit四个版本，且可以在使用中动态调整。以下是重新申请空间的代码：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">sds <span class="title">sdsMakeRoomFor</span><span class="params">(sds s, <span class="keyword">size_t</span> addlen)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">void</span> *sh, *newsh;</span><br><span class="line">    <span class="keyword">size_t</span> avail = sdsavail(s);</span><br><span class="line">    <span class="keyword">size_t</span> len, newlen;</span><br><span class="line">    <span class="keyword">char</span> type, oldtype = s[<span class="number">-1</span>] &amp; SDS_TYPE_MASK;</span><br><span class="line">    <span class="keyword">int</span> hdrlen;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Return ASAP if there is enough space left. */</span></span><br><span class="line">    <span class="keyword">if</span> (avail &gt;= addlen) <span class="keyword">return</span> s;</span><br><span class="line"></span><br><span class="line">    len = sdslen(s);</span><br><span class="line">    sh = (<span class="keyword">char</span>*)s-sdsHdrSize(oldtype);</span><br><span class="line">    newlen = (len+addlen);</span><br><span class="line">    <span class="keyword">if</span> (newlen &lt; SDS_MAX_PREALLOC)</span><br><span class="line">        newlen *= <span class="number">2</span>;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        newlen += SDS_MAX_PREALLOC;</span><br><span class="line"></span><br><span class="line">    type = sdsReqType(newlen);</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Don't use type 5: the user is appending to the string and type 5 is</span></span><br><span class="line"><span class="comment">     * not able to remember empty space, so sdsMakeRoomFor() must be called</span></span><br><span class="line"><span class="comment">     * at every appending operation. */</span></span><br><span class="line">    <span class="keyword">if</span> (type == SDS_TYPE_5) type = SDS_TYPE_8;</span><br><span class="line"></span><br><span class="line">    hdrlen = sdsHdrSize(type);</span><br><span class="line">    <span class="keyword">if</span> (oldtype==type) &#123;</span><br><span class="line">        newsh = s_realloc(sh, hdrlen+newlen+<span class="number">1</span>);</span><br><span class="line">        <span class="keyword">if</span> (newsh == <span class="literal">NULL</span>) <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line">        s = (<span class="keyword">char</span>*)newsh+hdrlen;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">/* Since the header size changes, need to move the string forward,</span></span><br><span class="line"><span class="comment">         * and can't use realloc */</span></span><br><span class="line">        newsh = s_malloc(hdrlen+newlen+<span class="number">1</span>);</span><br><span class="line">        <span class="keyword">if</span> (newsh == <span class="literal">NULL</span>) <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line">        <span class="built_in">memcpy</span>((<span class="keyword">char</span>*)newsh+hdrlen, s, len+<span class="number">1</span>);</span><br><span class="line">        s_free(sh);</span><br><span class="line">        s = (<span class="keyword">char</span>*)newsh+hdrlen;</span><br><span class="line">        s[<span class="number">-1</span>] = type;</span><br><span class="line">        sdssetlen(s, len);</span><br><span class="line">    &#125;</span><br><span class="line">    sdssetalloc(s, newlen);</span><br><span class="line">    <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>redis对<code>sdshdr</code>结构体的操作总是传入<code>buf</code>指针，通过<code>buf[-1]</code>来判断类型，再进行下一步操作。如果<code>avail</code>足够用，则直接增加<code>len</code>即可。否则，先确定新字符串的长度，然后尽可能多的尝试分配内存，再检查一下<code>type</code>是否发生了变化（比如需要用16位的length来代替8位的length），如果没发生变化，则返回<code>realloc</code>后的指针即可，否则需要重新申请一块内存，把字符串内的数据copy过去后，再修改header信息。</p>
+<h2 id="链表"><a href="#链表" class="headerlink" title="链表"></a>链表</h2><p>相对来说链表比较简单，redis实现了双向链表：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">listNode</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">listNode</span> *<span class="title">prev</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">listNode</span> *<span class="title">next</span>;</span></span><br><span class="line">    <span class="keyword">void</span> *value;</span><br><span class="line">&#125; listNode;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">listIter</span> &#123;</span></span><br><span class="line">    listNode *next;</span><br><span class="line">    <span class="keyword">int</span> direction;</span><br><span class="line">&#125; listIter;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">list</span> &#123;</span></span><br><span class="line">    listNode *head;</span><br><span class="line">    listNode *tail;</span><br><span class="line">    <span class="keyword">void</span> *(*dup)(<span class="keyword">void</span> *ptr);</span><br><span class="line">    <span class="keyword">void</span> (*<span class="built_in">free</span>)(<span class="keyword">void</span> *ptr);</span><br><span class="line">    <span class="keyword">int</span> (*match)(<span class="keyword">void</span> *ptr, <span class="keyword">void</span> *key);</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> len;</span><br><span class="line">&#125; <span class="built_in">list</span>;</span><br></pre></td></tr></table></figure>
+
+<p><code>listNode</code>定义了前驱、后继节点和指向实际数据的指针； <code>list</code>包含了头、尾指针、链表长度，以及节点复制、释放、比较的函数指针；<code>listIter</code>是迭代器。其他的基本链表操作函数就忽略了。</p>
+<h2 id="字典"><a href="#字典" class="headerlink" title="字典"></a>字典</h2><p>Redis的字典使用了hash表作为底层实现，如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictEntry</span> &#123;</span></span><br><span class="line">    <span class="keyword">void</span> *key; </span><br><span class="line">    <span class="keyword">union</span> &#123;</span><br><span class="line">        <span class="keyword">void</span> *val;</span><br><span class="line">        <span class="keyword">uint64_t</span> u64;</span><br><span class="line">        <span class="keyword">int64_t</span> s64;</span><br><span class="line">        <span class="keyword">double</span> d;</span><br><span class="line">    &#125; v;  <span class="comment">// value，如果是基本类型则可以不需要额外空间</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">dictEntry</span> *<span class="title">next</span>;</span>  <span class="comment">// 下一个entry</span></span><br><span class="line">&#125; dictEntry;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictType</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint64_t</span> (*hashFunction)(<span class="keyword">const</span> <span class="keyword">void</span> *key);   <span class="comment">// 计算key的hash值</span></span><br><span class="line">    <span class="keyword">void</span> *(*keyDup)(<span class="keyword">void</span> *privdata, <span class="keyword">const</span> <span class="keyword">void</span> *key);  <span class="comment">// 复制key</span></span><br><span class="line">    <span class="keyword">void</span> *(*valDup)(<span class="keyword">void</span> *privdata, <span class="keyword">const</span> <span class="keyword">void</span> *obj);   <span class="comment">// 复制value</span></span><br><span class="line">    <span class="keyword">int</span> (*keyCompare)(<span class="keyword">void</span> *privdata, <span class="keyword">const</span> <span class="keyword">void</span> *key1, <span class="keyword">const</span> <span class="keyword">void</span> *key2); <span class="comment">// 比较key</span></span><br><span class="line">    <span class="keyword">void</span> (*keyDestructor)(<span class="keyword">void</span> *privdata, <span class="keyword">void</span> *key);  <span class="comment">// 释放key</span></span><br><span class="line">    <span class="keyword">void</span> (*valDestructor)(<span class="keyword">void</span> *privdata, <span class="keyword">void</span> *obj);    <span class="comment">// 释放value</span></span><br><span class="line">&#125; dictType;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictht</span> &#123;</span></span><br><span class="line">    dictEntry **table;  <span class="comment">// dictEntry[N]代表了hash值为N的桶（数组）</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> size; <span class="comment">// table数组的长度</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> sizemask; <span class="comment">// 方便获取hash值对应到哪个桶</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> used;  <span class="comment">// 一共保存了多少个节点</span></span><br><span class="line">&#125; dictht;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dict</span> &#123;</span></span><br><span class="line">    dictType *type;  <span class="comment">// 节点操作函数指针集合</span></span><br><span class="line">    <span class="keyword">void</span> *privdata;  <span class="comment">// 私有数据，方便操作hash表</span></span><br><span class="line">    dictht ht[<span class="number">2</span>];        <span class="comment">// 维护了两个hash表，ht[1]主要用来进行rehash，一般使用ht[0]</span></span><br><span class="line">    <span class="keyword">long</span> rehashidx; <span class="comment">// rehash索引，-1表示没有在rehash</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> iterators; <span class="comment">// 一共有多少个相关的iterator</span></span><br><span class="line">&#125; dict;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictIterator</span> &#123;</span></span><br><span class="line">    dict *d;  <span class="comment">// 指向dict的指针</span></span><br><span class="line">    <span class="keyword">long</span> index;  <span class="comment">// 索引值</span></span><br><span class="line">    <span class="keyword">int</span> table;  <span class="comment">// 应该访问dict.ht[0]还是dict.ht[1]</span></span><br><span class="line">    <span class="keyword">int</span>  safe;  <span class="comment">// 是否为安全模式，如果为1表示可以在迭代期间进行add、find等操作，否则只能执行dictNext()</span></span><br><span class="line">    dictEntry *entry, *nextEntry; <span class="comment">// 当前的entry和下一个entry</span></span><br><span class="line">    <span class="comment">/* unsafe iterator fingerprint for misuse detection. */</span></span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> fingerprint;  <span class="comment">// 迭代器指纹，表示字典是否在迭代期间是否变化</span></span><br><span class="line">&#125; dictIterator;</span><br></pre></td></tr></table></figure>
+
+<p>Hash表的桶长度必须为2的倍数（计为N），这样对N求模的时候，可以改为对N-1求与。如果hash冲突，则用<code>dictEntry-&gt;next</code>来串起来形成单链表。</p>
+<p>这样做另一个好处是，在扩表rehash的时候，某个桶里的key只能被重新rehash到特定的两个桶里。比如桶大小为0b1000，那么对于任意的key，会落在hash(key)&amp;0b111的桶内，计为b0。如果桶增长为0b10000，那么会落在hash(key)&amp;0b1111=(hash(key)&amp;0b1000) | (hash(key)&amp;0b111)，即取决于hash(key)写为二进制后的第4位是否为1。当然更重要的是缩表时，由于某些桶也只能映射到同一个桶里，那么把两个链表连在一起就可以了。不管扩表还是缩表，新的hash表桶数量还是取决于节点数。</p>
+<p>Redis的rehash过程是渐进式的，如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">dictRehash</span><span class="params">(dict *d, <span class="keyword">int</span> n)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">int</span> empty_visits = n*<span class="number">10</span>; <span class="comment">/* Max number of empty buckets to visit. */</span></span><br><span class="line">    <span class="keyword">if</span> (!dictIsRehashing(d)) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">while</span>(n-- &amp;&amp; d-&gt;ht[<span class="number">0</span>].used != <span class="number">0</span>) &#123;</span><br><span class="line">        dictEntry *de, *nextde;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Note that rehashidx can't overflow as we are sure there are more</span></span><br><span class="line"><span class="comment">         * elements because ht[0].used != 0 */</span></span><br><span class="line">        assert(d-&gt;ht[<span class="number">0</span>].size &gt; (<span class="keyword">unsigned</span> <span class="keyword">long</span>)d-&gt;rehashidx);</span><br><span class="line">        <span class="keyword">while</span>(d-&gt;ht[<span class="number">0</span>].table[d-&gt;rehashidx] == <span class="literal">NULL</span>) &#123;</span><br><span class="line">            d-&gt;rehashidx++;</span><br><span class="line">            <span class="keyword">if</span> (--empty_visits == <span class="number">0</span>) <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        de = d-&gt;ht[<span class="number">0</span>].table[d-&gt;rehashidx];</span><br><span class="line">        <span class="comment">/* Move all the keys in this bucket from the old to the new hash HT */</span></span><br><span class="line">        <span class="keyword">while</span>(de) &#123;</span><br><span class="line">            <span class="keyword">uint64_t</span> h;</span><br><span class="line"></span><br><span class="line">            nextde = de-&gt;next;</span><br><span class="line">            <span class="comment">/* Get the index in the new hash table */</span></span><br><span class="line">            h = dictHashKey(d, de-&gt;key) &amp; d-&gt;ht[<span class="number">1</span>].sizemask;</span><br><span class="line">            de-&gt;next = d-&gt;ht[<span class="number">1</span>].table[h];</span><br><span class="line">            d-&gt;ht[<span class="number">1</span>].table[h] = de;</span><br><span class="line">            d-&gt;ht[<span class="number">0</span>].used--;</span><br><span class="line">            d-&gt;ht[<span class="number">1</span>].used++;</span><br><span class="line">            de = nextde;</span><br><span class="line">        &#125;</span><br><span class="line">        d-&gt;ht[<span class="number">0</span>].table[d-&gt;rehashidx] = <span class="literal">NULL</span>;</span><br><span class="line">        d-&gt;rehashidx++;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Check if we already rehashed the whole table... */</span></span><br><span class="line">    <span class="keyword">if</span> (d-&gt;ht[<span class="number">0</span>].used == <span class="number">0</span>) &#123;</span><br><span class="line">        zfree(d-&gt;ht[<span class="number">0</span>].table);</span><br><span class="line">        d-&gt;ht[<span class="number">0</span>] = d-&gt;ht[<span class="number">1</span>];</span><br><span class="line">        _dictReset(&amp;d-&gt;ht[<span class="number">1</span>]);</span><br><span class="line">        d-&gt;rehashidx = <span class="number">-1</span>;</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* More to rehash... */</span></span><br><span class="line">    <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>Redis每次只处理10*n个桶，那么如果刚巧这些桶都没有数据，那么可能这一趟下来一个节点也不处理。rehashidx代表了正在rehash哪个桶，每次rehash的时候都是从ht[0]迁移到ht[1]，对于每个节点，会从ht[0]删除，再加到ht[1]里。最后检查ht[0]-&gt;used是否为0，以判断rehash是否结束。如果结束，则释放ht[0]，将ht[0]指向ht[1]，清空ht[1]，并重置rehashidx。</p>
+<p>渐进式rehash的好处是不会长时间阻塞（除非某个桶里的节点数非常多，当然也可以改成按节点个数来决定一趟rehash持续多长时间，但暂且不论），但对其他操作会有一定影响。不过redis单线程的特性会减少非常多的锁和同步带来的问题（比如多线程环境下对rehashidx的操作必须加锁，移动节点也必须加锁来保证原子性），因此这些处理会变得比较简单，比如添加操作：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">dictEntry *<span class="title">dictAddRaw</span><span class="params">(dict *d, <span class="keyword">void</span> *key, dictEntry **existing)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">long</span> index;</span><br><span class="line">    dictEntry *entry;</span><br><span class="line">    dictht *ht;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (dictIsRehashing(d)) _dictRehashStep(d);</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Get the index of the new element, or -1 if</span></span><br><span class="line"><span class="comment">     * the element already exists. */</span></span><br><span class="line">    <span class="keyword">if</span> ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == <span class="number">-1</span>)</span><br><span class="line">        <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Allocate the memory and store the new entry.</span></span><br><span class="line"><span class="comment">     * Insert the element in top, with the assumption that in a database</span></span><br><span class="line"><span class="comment">     * system it is more likely that recently added entries are accessed</span></span><br><span class="line"><span class="comment">     * more frequently. */</span></span><br><span class="line">    ht = dictIsRehashing(d) ? &amp;d-&gt;ht[<span class="number">1</span>] : &amp;d-&gt;ht[<span class="number">0</span>];</span><br><span class="line">    entry = zmalloc(<span class="keyword">sizeof</span>(*entry));</span><br><span class="line">    entry-&gt;next = ht-&gt;table[index];</span><br><span class="line">    ht-&gt;table[index] = entry;</span><br><span class="line">    ht-&gt;used++;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Set the hash entry fields. */</span></span><br><span class="line">    dictSetKey(d, entry, key);</span><br><span class="line">    <span class="keyword">return</span> entry;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以看出每次添加的时候都会尝试推进rehash过程（如果存在的话），然后根据rehashidx向对应的ht里插入数据；类似的，查询时两个表都会查。不过扩表和缩表的时机暂时没查到，据说和负载因子（<code>used/size</code>）有关，过大会扩表，过小会缩表。</p>
+<p>还有一个问题在于rehash时迭代器的行为，迭代器分为safe和unsafe两种，safe的话则会增加dict的迭代器计数（这个计数器大于0时会禁止rehash），unsafe则会记下当前字典的指纹（hash值，取决于两个hash表的指针值、size、used），在释放的时候如果指纹不匹配则报错。遍历就是挨个桶遍历，每个桶顺着链表去查，遍历完一个ht后再遍历下一个，相关代码如下。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">dictEntry *<span class="title">dictNext</span><span class="params">(dictIterator *iter)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">while</span> (<span class="number">1</span>) &#123;</span><br><span class="line">        <span class="keyword">if</span> (iter-&gt;entry == <span class="literal">NULL</span>) &#123;</span><br><span class="line">            dictht *ht = &amp;iter-&gt;d-&gt;ht[iter-&gt;table];</span><br><span class="line">            <span class="keyword">if</span> (iter-&gt;index == <span class="number">-1</span> &amp;&amp; iter-&gt;table == <span class="number">0</span>) &#123;</span><br><span class="line">                <span class="keyword">if</span> (iter-&gt;safe)</span><br><span class="line">                    iter-&gt;d-&gt;iterators++;</span><br><span class="line">                <span class="keyword">else</span></span><br><span class="line">                    iter-&gt;fingerprint = dictFingerprint(iter-&gt;d);</span><br><span class="line">            &#125;</span><br><span class="line">            iter-&gt;index++;</span><br><span class="line">            <span class="keyword">if</span> (iter-&gt;index &gt;= (<span class="keyword">long</span>) ht-&gt;size) &#123;</span><br><span class="line">                <span class="keyword">if</span> (dictIsRehashing(iter-&gt;d) &amp;&amp; iter-&gt;table == <span class="number">0</span>) &#123;</span><br><span class="line">                    iter-&gt;table++;</span><br><span class="line">                    iter-&gt;index = <span class="number">0</span>;</span><br><span class="line">                    ht = &amp;iter-&gt;d-&gt;ht[<span class="number">1</span>];</span><br><span class="line">                &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                    <span class="keyword">break</span>;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">            iter-&gt;entry = ht-&gt;table[iter-&gt;index];</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            iter-&gt;entry = iter-&gt;nextEntry;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (iter-&gt;entry) &#123;</span><br><span class="line">            <span class="comment">/* We need to save the 'next' here, the iterator user</span></span><br><span class="line"><span class="comment">             * may delete the entry we are returning. */</span></span><br><span class="line">            iter-&gt;nextEntry = iter-&gt;entry-&gt;next;</span><br><span class="line">            <span class="keyword">return</span> iter-&gt;entry;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>最后一个问题在于<code>dictScan</code>函数</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">dictScan</span><span class="params">(dict *d,</span></span></span><br><span class="line"><span class="function"><span class="params">                       <span class="keyword">unsigned</span> <span class="keyword">long</span> v,</span></span></span><br><span class="line"><span class="function"><span class="params">                       dictScanFunction *fn,</span></span></span><br><span class="line"><span class="function"><span class="params">                       dictScanBucketFunction* bucketfn,</span></span></span><br><span class="line"><span class="function"><span class="params">                       <span class="keyword">void</span> *privdata)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    dictht *t0, *t1;</span><br><span class="line">    <span class="keyword">const</span> dictEntry *de, *next;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> m0, m1;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (dictSize(d) == <span class="number">0</span>) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (!dictIsRehashing(d)) &#123;</span><br><span class="line">        t0 = &amp;(d-&gt;ht[<span class="number">0</span>]);</span><br><span class="line">        m0 = t0-&gt;sizemask;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Emit entries at cursor */</span></span><br><span class="line">        <span class="keyword">if</span> (bucketfn) bucketfn(privdata, &amp;t0-&gt;table[v &amp; m0]);</span><br><span class="line">        de = t0-&gt;table[v &amp; m0];</span><br><span class="line">        <span class="keyword">while</span> (de) &#123;</span><br><span class="line">            next = de-&gt;next;</span><br><span class="line">            fn(privdata, de);</span><br><span class="line">            de = next;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Set unmasked bits so incrementing the reversed cursor</span></span><br><span class="line"><span class="comment">         * operates on the masked bits */</span></span><br><span class="line">        v |= ~m0;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Increment the reverse cursor */</span></span><br><span class="line">        v = rev(v);</span><br><span class="line">        v++;</span><br><span class="line">        v = rev(v);</span><br><span class="line"></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        t0 = &amp;d-&gt;ht[<span class="number">0</span>];</span><br><span class="line">        t1 = &amp;d-&gt;ht[<span class="number">1</span>];</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Make sure t0 is the smaller and t1 is the bigger table */</span></span><br><span class="line">        <span class="keyword">if</span> (t0-&gt;size &gt; t1-&gt;size) &#123;</span><br><span class="line">            t0 = &amp;d-&gt;ht[<span class="number">1</span>];</span><br><span class="line">            t1 = &amp;d-&gt;ht[<span class="number">0</span>];</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        m0 = t0-&gt;sizemask;</span><br><span class="line">        m1 = t1-&gt;sizemask;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Emit entries at cursor */</span></span><br><span class="line">        <span class="keyword">if</span> (bucketfn) bucketfn(privdata, &amp;t0-&gt;table[v &amp; m0]);</span><br><span class="line">        de = t0-&gt;table[v &amp; m0];</span><br><span class="line">        <span class="keyword">while</span> (de) &#123;</span><br><span class="line">            next = de-&gt;next;</span><br><span class="line">            fn(privdata, de);</span><br><span class="line">            de = next;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Iterate over indices in larger table that are the expansion</span></span><br><span class="line"><span class="comment">         * of the index pointed to by the cursor in the smaller table */</span></span><br><span class="line">        <span class="keyword">do</span> &#123;</span><br><span class="line">            <span class="comment">/* Emit entries at cursor */</span></span><br><span class="line">            <span class="keyword">if</span> (bucketfn) bucketfn(privdata, &amp;t1-&gt;table[v &amp; m1]);</span><br><span class="line">            de = t1-&gt;table[v &amp; m1];</span><br><span class="line">            <span class="keyword">while</span> (de) &#123;</span><br><span class="line">                next = de-&gt;next;</span><br><span class="line">                fn(privdata, de);</span><br><span class="line">                de = next;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            <span class="comment">/* Increment the reverse cursor not covered by the smaller mask.*/</span></span><br><span class="line">            v |= ~m1;</span><br><span class="line">            v = rev(v);</span><br><span class="line">            v++;</span><br><span class="line">            v = rev(v);</span><br><span class="line"></span><br><span class="line">            <span class="comment">/* Continue while bits covered by mask difference is non-zero */</span></span><br><span class="line">        &#125; <span class="keyword">while</span> (v &amp; (m0 ^ m1));</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> v;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>fn</code>和<code>bucketfn</code>分别代表扫到一个节点和扫到一个桶时要调用的自定义函数。这里<code>v</code>是一个游标（cursor），初始可以设置为0，某种意义上代表了要扫哪个bucket，也是这个扫表算法的核心：从二进制的高位开始递增，比如当mask为0b111时，0b000会自增为0b100。核心算法为<code>v |= ~m0; v = rev(v); v++; v = rev(v);</code>，由于高位被置为1（<code>v |= ~m0</code>），那么反转后自增再反转，就一定会让有效的最高位自增1。</p>
+<p>而对于正在rehash的表，则会先去扫<code>ht[0]-&gt;mask&amp;v</code>和<code>ht[1]-&gt;mask&amp;v</code>这两个桶，依次扫size较大的那个hash table有而size较小的hash table没有的桶（自增算法同上），最后v会自增到以较小的mask为掩码、按高位自增的下一个数字，并返回。下次调用时，会以这个数字先开始扫两个表对应的桶，再作为低位、从高位开始自增并扫桶，直到它自增到以较小的mask为掩码、按高位自增的下一个数字。举个例子，当较大的mask为0b11111，较小的mask为0b111，v为0时，会：</p>
+<ul>
+<li>扫ht[0][0]和ht[1][0]，然后依次扫ht[1]的0b10000、0b01000、0b11000，然后返回0b100</li>
+<li>扫ht[0][0b100]和ht[1][0b100]，然后依次扫ht[1]的0b10100、0b01100、0b11100，然后返回0b010</li>
+<li>扫ht[0][0b10]和ht[1][0b10]，然后依次扫ht[1]的0b10010、0b01010、0b11010，然后返回0b110</li>
+<li>扫ht[0][0b110]和ht[1][0b110]，然后依次扫ht[1]的0b10110、0b01110、0b11110，然后返回0b001</li>
+<li>…</li>
+<li>扫ht[0][0b111]和ht[1][0b111]，然后依次扫ht[1]的0b10111、0b01111、0b11111，然后返回0</li>
+</ul>
+<p>顺序为0、16 、8、24、4、20、12、28、2、18、10、26、6、22、14、30、1、17、9、25、5、21、13、29、3、19、11、27、7、23、15、31</p>
+<p>其中按位反转算法如下，原理我也不懂，但这个算法可以把比如0b00000010反转为0b01000000</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/* Function to reverse bits. Algorithm from:</span></span><br><span class="line"><span class="comment"> * http://graphics.stanford.edu/~seander/bithacks.html#ReverseParallel */</span></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">rev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">long</span> v)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> s = <span class="number">8</span> * <span class="keyword">sizeof</span>(v); <span class="comment">// bit size; must be power of 2</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> mask = ~<span class="number">0</span>;</span><br><span class="line">    <span class="keyword">while</span> ((s &gt;&gt;= <span class="number">1</span>) &gt; <span class="number">0</span>) &#123;</span><br><span class="line">        mask ^= (mask &lt;&lt; s);</span><br><span class="line">        v = ((v &gt;&gt; s) &amp; mask) | ((v &lt;&lt; s) &amp; ~mask);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> v;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>粗看起来，这种扫表方式和正常的逐次扫表相比，并没有什么特别的优势。但如前文所述，扩表的时候，一个key只可能被rehash到低位和原桶一样的桶里；缩表的时候，也一定会被rehash到hash(key)低位对应的桶里。因此，比如一个桶从0b111扩展到0b11111，如果0b100被扫过、v变成了0b010，那么0b??100再也不会被扫到，因为按翻转后的顺序，0b??100&lt;0b00010，而之后是从0b00010开始自增的，且不会漏扫（不考虑新增的节点）。类似的，如果从0b11111缩表到0b111，如果0b00000被扫过、v变成了0b10000，那么接下来会按0b000开始扫缩表后的桶，这样的话可能会重复扫这一个桶，但不会漏扫。而正常的按顺序扫表，缩表的时候很可能漏扫一片，扩表的时候则很可能会重复扫一片。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/24/jvm-exception/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1655,186 +1787,6 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/30/jvm3/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/30/jvm3/" class="post-title-link" itemprop="url">JVM学习（3）垃圾回收器和内存分配策略</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-30 00:00:00" itemprop="dateCreated datePublished" datetime="2019-08-30T00:00:00+08:00">2019-08-30</time>
-            </span>
-          
-            
-
-            
-              <span class="post-meta-item">
-                <span class="post-meta-item-icon">
-                  <i class="fa fa-calendar-check-o"></i>
-                </span>
-                <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-09-01 16:19:28" itemprop="dateModified" datetime="2019-09-01T16:19:28+08:00">2019-09-01</time>
-              </span>
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>垃圾回收（Garbage Collection,GC）机制是JVM的核心之一，而GC时需要考虑几个问题：</p>
-<ol>
-<li>回收哪些内存</li>
-<li>什么时候回收</li>
-<li>如何回收</li>
-</ol>
-<h2 id="可达性分析"><a href="#可达性分析" class="headerlink" title="可达性分析"></a>可达性分析</h2><p>判断一个object是否死亡主要有两种方式：引用计数和可达性分析。引用计数相对简单，但在object互相引用时会造成内存泄漏，所以JVM使用了可达性分析：一个存活的object所引用的object也是存活的。最初的存活对象被称为GC Roots，包含以下几类：</p>
-<ol>
-<li>虚拟机栈（栈帧中的本地变量表）中引用的对象。</li>
-<li>方法区中类静态属性引用的对象。</li>
-<li>方法区中常量引用的对象。</li>
-<li>本地方法栈中JNI引用的对象。</li>
-</ol>
-<h3 id="引用（reference）"><a href="#引用（reference）" class="headerlink" title="引用（reference）"></a>引用（reference）</h3><p>值得一提的是“引用”，Java中的引用分为以下几类：</p>
-<ol>
-<li>强引用（strong reference）：正常代码中的引用，比如Object a = new Object()</li>
-<li>软引用（soft reference）：SoftReference类，描述一些还有用但非必须的对象。这类引用一般不会回收，但如果GC时判断可能会OOM，则会回收这类引用，如果回收失败时还可能OOM，则报错。</li>
-<li>弱引用（weak reference）：WeakReference类，和SoftReference类似，但只能存活到下一次GC前。</li>
-<li>虚引用（phantom reference）：最弱的引用，不对对象生存周期有任何影响，这类引用返回的对象总是null，不过如果GC回收这个对象，那么会接收到一个消息。</li>
-</ol>
-<p>SoftReference主要用于缓存，比如google的LoadingCache。PhantomReference主要用来实现类似析构函数之类的功能。这里又牵扯到finalize()方法，JVM规定如果object没有覆写finalize()或者finalize()已被JVM调用过，那么GC时就不用管finalize()。而如果JVM判断需要执行finalize()方法，那么会把这个object扔到一个叫F-Queue的队列里，由一个低优先级的Finalizer线程去依次执行各个finalize()方法：最关键的地方在于这个Finalizer不保证finalize()能被执行完，毕竟如果一个finalize()死循环或者超时了会影响整个JVM的工作，所以可能执行到一半就停了。此外，如果finalize()里又和其他对象建立了引用关系，执行完finalize()，GC会判断这个object又重新可达了，会不去回收这个对象，相当于c++中一个object在执行完析构函数后还正常存活。</p>
-<p>总的来说因为finalize()有各种各样的坑，所以在需要类似析构函数的地方采用PhantomReference来代替。一个最典型的例子是DIrectBuffer，这个类有一个成员是cleaner，它是PhantomReference的子类，当一个DIrectBuffer被GC时会把这个对象塞到指定的ReferenceQueue里，然后再释放引用的堆外内存。</p>
-<h3 id="方法区回收"><a href="#方法区回收" class="headerlink" title="方法区回收"></a>方法区回收</h3><p>方法区主要有两种数据可能会被回收：废弃常量和无用的类。常量回收和普通object回收很类似，只是这些常量放在方法区而已；无用的类判断起来很严格，要求</p>
-<ol>
-<li>没有该类的任何实例</li>
-<li>加载该类的ClassLoader已被回收</li>
-<li>该类对应的java.lang.Class对象没有被任何地方引用，即无法在任何地方通过反射访问该类的方法</li>
-</ol>
-<p>一般来说类还是不需要被回收的，但对于大量使用反射、动态代理、cglib等ByteCode框架、动态生成JSP以及OSGi这些频繁自定义ClassLoader的场景都需要虚拟机具备类卸载功能，保证永久代不会溢出。值得一提的是JDK1.8以后取消了永久代，取而代之的是元空间（metaspace），metaspace使用的是native memory，且可以动态增加（当然也有上限，通过MaxMetaspaceSize配置）。这样可以极大降低永久代溢出的风险。</p>
-<h2 id="垃圾回收算法"><a href="#垃圾回收算法" class="headerlink" title="垃圾回收算法"></a>垃圾回收算法</h2><h3 id="标记-清除（mark-sweep）算法"><a href="#标记-清除（mark-sweep）算法" class="headerlink" title="标记-清除（mark-sweep）算法"></a>标记-清除（mark-sweep）算法</h3><p>简单来说就是标记哪些部分的内存需要回收（见前文），标记完后统一回收。问题显而易见：运行一段时间后会产生大量的内存碎片，导致内存利用率降低。此外单线程的mark-sweep必然效率低。</p>
-<h3 id="复制（copy）算法"><a href="#复制（copy）算法" class="headerlink" title="复制（copy）算法"></a>复制（copy）算法</h3><p>这种算法需要将内存分成（等大的）A，B两部分，分配内存时从A开始顺序分配，GC的时候把A中判定为存活的object复制到B，然后再从B开始顺序分配。好处是简单高效，缺点也显而易见：有一半内存被闲置了。</p>
-<p>一般新生代采用这种回收方法，即将内存分成一大块的eden区和两块较小的survivor区，每次使用eden区和一个survivor区。内存从eden区开始顺序分配，假设eden区能回收绝大部分内存，那么GC的时候就把eden区和survivorA区的内存copy到survivorB区即可，这样就可以在只闲置一个survivor内存的情况下保证内存分配和回收足够高效。</p>
-<p>在某些情况下可能survivor区不够大，需要依赖其他部分内存（老年代）进行分配担保（handle promotion），即把一部分对象直接扔到老年代。</p>
-<h3 id="标记-整理（mark-compact）算法"><a href="#标记-整理（mark-compact）算法" class="headerlink" title="标记-整理（mark-compact）算法"></a>标记-整理（mark-compact）算法</h3><p>mark-sweep的改进，在标记完后把所有存活object向一个方向移动，可以避免内存闲置。</p>
-<h3 id="分代收集（generational-collection）算法"><a href="#分代收集（generational-collection）算法" class="headerlink" title="分代收集（generational collection）算法"></a>分代收集（generational collection）算法</h3><p>根据对象生存周期的不同把内存划成几块（一般是分为新生代和老年代），在各部分内存采用不同的回收算法。比如在年轻代可以用复制算法，而老年代可以用标记-清理或标记-整理算法。</p>
-<h2 id="HotSpot算法实现"><a href="#HotSpot算法实现" class="headerlink" title="HotSpot算法实现"></a>HotSpot算法实现</h2><h3 id="GC-Roots和OopMap"><a href="#GC-Roots和OopMap" class="headerlink" title="GC Roots和OopMap"></a>GC Roots和OopMap</h3><p>进行可达性分析时有两个问题：</p>
-<ol>
-<li>GC Roots包括两部分：全局性引用（如常量和类静态属性）和执行上下文（如栈帧中的本地变量表）。但这两部分内存包含的不仅是reference，还有比如方法，int，long型变量等，逐个检查这些内存中的引用会比较费时。</li>
-<li>可达性分析时需要保证分析过程中的对象引用关系不变，这点是GC需要停顿所有java执行线程（stop the world）的重要原因之一。</li>
-</ol>
-<p>针对第一个问题，HotSpot采用了一种称为OopMap的数据结构来记录对象内哪些地方存放着reference，在类加载完后就可以把对象内什么偏移量上是什么类型的数据计算出来。这种GC方式被称为准确式GC，准确式GC和保守式GC的区别可以参考<a href="https://blog.csdn.net/woaigaolaoshi/article/details/51439227" target="_blank" rel="noopener">我爱学Java之JVM中的OopMap</a>。HotSpot在JIT（just in time）编译过程中，会插入相关指令来标明哪些地方是对象引用，如下图中0x026eb730到0x026eb7be这段区间内，exb寄存器和栈中偏移为16的内存区域各有一个普通对象指针的引用。</p>
-<p><img src="/images/jvm_oopmap_sample.png" alt="String.hashCode()方法编译后的本地代码"></p>
-<h3 id="安全点（safe-point）"><a href="#安全点（safe-point）" class="headerlink" title="安全点（safe point）"></a>安全点（safe point）</h3><p>OopMap能加速GC Roots枚举，但本身也会占用一定空间，因此不是所有指令都生成对应的OopMap，只在特定位置生成OopMap，记录了执行到该方法的某条指令的时候，栈上和寄存器里哪些位置是引用，这样的位置称为安全点（safe point）。一般safe point选在可能“长时间执行”的地方，包括</p>
-<ol>
-<li>循环的末尾 </li>
-<li>方法临返回前 / 调用方法的call指令后 </li>
-<li>可能抛异常的位置</li>
-</ol>
-<p>另一个问题在于如何在GC时让所有线程（除JNI）外都跑到最近的safe point再停下来，有两种方式：</p>
-<ol>
-<li>抢先式中断（Preemptive Suspension）：GC发生时，先把所有线程中断，如果发现线程部在safe point上，则恢复执行，让它跑到安全点上</li>
-<li>主动式中断（Voluntary Suspension）：GC时先设一个标志，各个线程会轮询这个标志，如果这个标志为true时就自己中断</li>
-</ol>
-<p>现在一般都用主动式中断，比如下边这个代码，GC需要暂停线程时会把0x160100内存页设置为不可读，那么线程执行到test时会产生一个自陷异常信号，在预先注册的异常处理器中暂停线程，从而实现等待。</p>
-<p><img src="/images/jvm_safe_point_sample.png" alt="轮询指令"></p>
-<p>话说回来，让线程主动自陷的前提是线程本身正在运行，但如果线程并没有执行，比如正在sleep、blocked等等，因此引入安全区域（safe region）的概念。所谓safe region，是指这段代码片段中引用关系不会发生变化。线程进入safe region后就不管GC设置的标志了，但出safe region时需要检查GC是否已经完成了根节点枚举或者整个GC过程，没有的话就等到GC结束。</p>
-<h2 id="垃圾回收器"><a href="#垃圾回收器" class="headerlink" title="垃圾回收器"></a>垃圾回收器</h2><p>HotSpot提供了很多垃圾回收器，方便用户在特定情况下使用合适的垃圾回收方式。下图列出了适合新生代和老年代的各个垃圾回收器，注意并不是所有垃圾回收器可以配合使用。</p>
-<p><img src="/images/jvm_gc_types.png" alt="HotSpot虚拟机的垃圾收集器"></p>
-<h3 id="Serial-Serial-Old收集器"><a href="#Serial-Serial-Old收集器" class="headerlink" title="Serial/Serial Old收集器"></a>Serial/Serial Old收集器</h3><p>最简单的单线程垃圾回收器，新生代使用Serial，采用复制算法；老年代使用Serial Old，采用标记-整理算法。好处是simple is the best，坏处是并行度不够，且stop the world时间很长。一般用在client模式下。</p>
-<p><img src="/images/jvm_serial.png" alt="Serial收集器"></p>
-<h3 id="ParNew收集器"><a href="#ParNew收集器" class="headerlink" title="ParNew收集器"></a>ParNew收集器</h3><p>简单来说就是Serial的多线程版本。由于CMS只能和Serial和ParNew配合使用，故ParNew也是Server模式下首选的新生代收集器。</p>
-<h3 id="Parallel-Scavenge-Parallel-Old收集器"><a href="#Parallel-Scavenge-Parallel-Old收集器" class="headerlink" title="Parallel Scavenge/Parallel Old收集器"></a>Parallel Scavenge/Parallel Old收集器</h3><p>看介绍和ParNew差不多，但更关注吞吐量，即尽可能降低GC总时间。相对应的Parallel Old可以认为是Parallel Scavenge的老年代版本，两者可以配合使用，适用于吞吐量敏感的场合（比如离线任务）</p>
-<h3 id="CMS收集器"><a href="#CMS收集器" class="headerlink" title="CMS收集器"></a>CMS收集器</h3><p>CMS（Concurrent Mark Sweep）收集器的目标是降低GC停顿，适用于重视响应时间的服务。CMS基于mark-sweep算法，想法也很简单：很多时候stop-the-world是为了避免引用变更，但毕竟不是所有引用在GC期间都会改，所以如果能侦测到哪些引用没变且没被引用，就可以和其他用户线程同步进行回收。CMS步骤分为以下4步：</p>
-<ol>
-<li>初始标记（CMS initial mark）</li>
-<li>并发标记（CMS concurrent mark）</li>
-<li>重新标记（CMS remark）</li>
-<li>并发清除（CMS concurrent sweep）</li>
-</ol>
-<p>其中1和3还是需要stop-the-world，而耗时最长的2和4可以和用户线程并发执行，显然GC停顿时间变短了。 </p>
-<p><img src="/images/jvm_cms.png" alt="CMS执行流程"></p>
-<p>当然CMS也有缺点，</p>
-<ol>
-<li>对CPU资源敏感，因为和用户线程并发执行会占用一部分CPU资源，导致用户程序执行变慢</li>
-<li>无法处理浮动垃圾（floating garbage），由于和用户线程并发执行，在此期间产生的垃圾无法被检测和回收，导致CMS不能等到老年代几乎完全被填满了再进行收集，需要预留一部分。当CMS运行期间内存不足，会报“concurrent mode failure”，此时JVM会临时采用Serial Old来进行回收，触发full GC，导致响应时间变长</li>
-<li>CMS基于mark-sweep，会导致大量内存碎片，对此可以选择在CMS执行几次不压缩的full GC后，执行一次带压缩的full GC。压缩的full GC过程无法和用户线程并发执行。</li>
-</ol>
-<h3 id="G1收集器"><a href="#G1收集器" class="headerlink" title="G1收集器"></a>G1收集器</h3><p>G1（Garbage first）的基本思想是把内存预先划分成若干大小的region，在每个region独立执行GC，这样有几个好处：</p>
-<ol>
-<li>可以和用户线程并发执行</li>
-<li>可以分代回收</li>
-<li>内存碎片较少</li>
-<li>停顿可预测</li>
-</ol>
-<p><img src="/images/jvm_g1_memory.png" alt="G1收集器的内存分布"></p>
-<p>那么如何判断一个region的object是否被其他region引用？G1采用了Remembered Set来避免全堆扫描，每个region都配一个对应的remembered set，当JVM发现应用程序对reference类型进行写操作时，会产生一个write barrier暂时中断写操作，检查reference引用的对象是否在其他region，如果是的话就通过CardTable把相关引用信息记录到被引用对象所属的region的remembered set中，这样在扫region的时候可以避免全堆扫描。</p>
-<p>更详细的可以参考<a href="https://blog.csdn.net/coderlius/article/details/79272773" target="_blank" rel="noopener">详解 JVM Garbage First(G1) 垃圾收集器</a></p>
-<h2 id="内存分配和回收策略"><a href="#内存分配和回收策略" class="headerlink" title="内存分配和回收策略"></a>内存分配和回收策略</h2><h3 id="对象优先在eden分配"><a href="#对象优先在eden分配" class="headerlink" title="对象优先在eden分配"></a>对象优先在eden分配</h3><p>对象优先在eden分配，如果eden区不足，则会触发一次minor GC。</p>
-<ul>
-<li>Minor GC是新生代GC，指发生在新生代的垃圾收集动作，minor GC发生的比较频繁，且回收速度也比较快</li>
-<li>Full GC（Major GC）指发生在老年代的GC。Full GC的速度一般比Minor GC慢10倍以上</li>
-</ul>
-<h3 id="大对象直接进老年代"><a href="#大对象直接进老年代" class="headerlink" title="大对象直接进老年代"></a>大对象直接进老年代</h3><p>比如byte[]数组。一般假定大对象的存活时间会比较长。分配连续的大内存可能会不成功，提前触发GC，应当尽量避免存活时间短的大对象。</p>
-<h3 id="长期存活的对象进入老年代"><a href="#长期存活的对象进入老年代" class="headerlink" title="长期存活的对象进入老年代"></a>长期存活的对象进入老年代</h3><p>JVM中每个对象有一个age计数器，对象每经过一次minor GC，age加1，超过一定年龄后（比如15）就扔到老年代。</p>
-<h3 id="动态对象年龄判定"><a href="#动态对象年龄判定" class="headerlink" title="动态对象年龄判定"></a>动态对象年龄判定</h3><p>不一定非要等到MaxTenuringThreshold才升级到老年代，如果survivor区相同年龄所有对象大小的总和超过survivor空间的一半，那么大于等于这个年龄的object也可以进入老年代</p>
-<h3 id="空间分配担保"><a href="#空间分配担保" class="headerlink" title="空间分配担保"></a>空间分配担保</h3><p>发生minor GC前，JVM会检查老年代最大可用的连续空间是否大于新生代所有对象总空间，成立的化minor GC就是安全的，否则会查看HandelPromotionFailure是否设置，如果设置的话会继续检查老年代最大可用的连续空间是否大于历次晋升到老年代的平均大小，如果大于，会尝试一次有风险的minor GC；如果小于，或者HandelPromotionFailure未设置，则进行full GC。</p>
-<p>所谓的风险是指survivor区可能无法容纳所有幸存object，会扔到老年代，而老年代如果也放不下，minor GC自然就失败了。</p>
-<p>感觉这一章内容还没完全看懂，以后再详细了解一下。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
@@ -1884,7 +1836,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">19</span>
+          <span class="site-state-item-count">20</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1943,7 +1895,9 @@
         
           
         
-        <span class="site-state-item-count">24</span>
+          
+        
+        <span class="site-state-item-count">25</span>
         <span class="site-state-item-name">tags</span>
         
       </div>

@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="还是对着《Redis设计与实现》看，不过由于redis源码比较短，可以对比着看源代码。 Redis源码可以在官网找，目前最新的stable版是5.0.5。不过如果是在Clion里看的话最好还是搞成cmake工程比较方便，可以参考redis-4.0.2-with-cmakelist-for-reading-code-in-clion，把CMakeLists.txt扔到工程目录下，然后针对5.0.5修">
+<meta name="keywords" content="redis">
+<meta property="og:type" content="article">
+<meta property="og:title" content="redis学习（1） 字节流、链表和字典">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/09/29/redis-read1/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="还是对着《Redis设计与实现》看，不过由于redis源码比较短，可以对比着看源代码。 Redis源码可以在官网找，目前最新的stable版是5.0.5。不过如果是在Clion里看的话最好还是搞成cmake工程比较方便，可以参考redis-4.0.2-with-cmakelist-for-reading-code-in-clion，把CMakeLists.txt扔到工程目录下，然后针对5.0.5修">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-09-30T10:46:20.345Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="redis学习（1） 字节流、链表和字典">
+<meta name="twitter:description" content="还是对着《Redis设计与实现》看，不过由于redis源码比较短，可以对比着看源代码。 Redis源码可以在官网找，目前最新的stable版是5.0.5。不过如果是在Clion里看的话最好还是搞成cmake工程比较方便，可以参考redis-4.0.2-with-cmakelist-for-reading-code-in-clion，把CMakeLists.txt扔到工程目录下，然后针对5.0.5修">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/09/29/redis-read1/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>redis学习（1） 字节流、链表和字典 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/29/redis-read1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">redis学习（1） 字节流、链表和字典
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-29 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-29T00:00:00+08:00">2019-09-29</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-30 18:46:20" itemprop="dateModified" datetime="2019-09-30T18:46:20+08:00">2019-09-30</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>还是对着《Redis设计与实现》看，不过由于redis源码比较短，可以对比着看源代码。</p>
+<p>Redis源码可以在<a href="https://redis.io/download" target="_blank" rel="noopener">官网</a>找，目前最新的stable版是5.0.5。不过如果是在Clion里看的话最好还是搞成cmake工程比较方便，可以参考<a href="https://github.com/Nov11/redis-4.0.2-with-cmakelist-for-reading-code-in-clion" target="_blank" rel="noopener">redis-4.0.2-with-cmakelist-for-reading-code-in-clion</a>，把<a href="/files/CMakeLists.txt">CMakeLists.txt</a>扔到工程目录下，然后针对5.0.5修改一下。</p>
+<p>Redis支持的数据结构包括字符串、链表、字典、跳表、整数集合、压缩列表</p>
+<h2 id="字符串-字节流"><a href="#字符串-字节流" class="headerlink" title="字符串/字节流"></a>字符串/字节流</h2><p>在<code>sds.h</code>中定义，类似</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> __<span class="title">attribute__</span> ((__<span class="title">packed__</span>)) <span class="title">sdshdr16</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint16_t</span> len; <span class="comment">// 字符串长度，可以用O(1)时间获得字符串长度</span></span><br><span class="line">    <span class="keyword">uint16_t</span> alloc; <span class="comment">// 一共申请了多少字节的内存</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> flags; <span class="comment">// 用来区分sdshdr版本</span></span><br><span class="line">    <span class="keyword">char</span> buf[]; <span class="comment">// 指向字符串的数组，简单来说redis的字符串和正常c字符串类似，也是以`\0`结尾，故兼容c标准库字符串函数</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>首先要说一下c的变长数组（flexible array），定义为变长数组后，这个结构体的长度实际上就可以是不定长且连续的。显然这种struct成员只能放在最后定义，用来处理流之类的不定长数据非常方便。</p>
+<p>严格来说<code>sdshdr</code>不是字符串而是字节流，因为字节流是可以在中间包含<code>\0</code>的，而c风格字符串不可以。</p>
+<p>redis字符串正常用起来和普通c字符串类似。但是当长度发生变化时，如果<code>len &lt; alloc</code>，则可以先尝试从buf里分配，从而避免频繁申请/释放内存；<code>flags</code>则是用来区分字符串版本，因为<code>len</code>和<code>alloc</code>本身的长度可以为8、16、32、64bit四个版本，且可以在使用中动态调整。以下是重新申请空间的代码：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">sds <span class="title">sdsMakeRoomFor</span><span class="params">(sds s, <span class="keyword">size_t</span> addlen)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">void</span> *sh, *newsh;</span><br><span class="line">    <span class="keyword">size_t</span> avail = sdsavail(s);</span><br><span class="line">    <span class="keyword">size_t</span> len, newlen;</span><br><span class="line">    <span class="keyword">char</span> type, oldtype = s[<span class="number">-1</span>] &amp; SDS_TYPE_MASK;</span><br><span class="line">    <span class="keyword">int</span> hdrlen;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Return ASAP if there is enough space left. */</span></span><br><span class="line">    <span class="keyword">if</span> (avail &gt;= addlen) <span class="keyword">return</span> s;</span><br><span class="line"></span><br><span class="line">    len = sdslen(s);</span><br><span class="line">    sh = (<span class="keyword">char</span>*)s-sdsHdrSize(oldtype);</span><br><span class="line">    newlen = (len+addlen);</span><br><span class="line">    <span class="keyword">if</span> (newlen &lt; SDS_MAX_PREALLOC)</span><br><span class="line">        newlen *= <span class="number">2</span>;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        newlen += SDS_MAX_PREALLOC;</span><br><span class="line"></span><br><span class="line">    type = sdsReqType(newlen);</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Don't use type 5: the user is appending to the string and type 5 is</span></span><br><span class="line"><span class="comment">     * not able to remember empty space, so sdsMakeRoomFor() must be called</span></span><br><span class="line"><span class="comment">     * at every appending operation. */</span></span><br><span class="line">    <span class="keyword">if</span> (type == SDS_TYPE_5) type = SDS_TYPE_8;</span><br><span class="line"></span><br><span class="line">    hdrlen = sdsHdrSize(type);</span><br><span class="line">    <span class="keyword">if</span> (oldtype==type) &#123;</span><br><span class="line">        newsh = s_realloc(sh, hdrlen+newlen+<span class="number">1</span>);</span><br><span class="line">        <span class="keyword">if</span> (newsh == <span class="literal">NULL</span>) <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line">        s = (<span class="keyword">char</span>*)newsh+hdrlen;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">/* Since the header size changes, need to move the string forward,</span></span><br><span class="line"><span class="comment">         * and can't use realloc */</span></span><br><span class="line">        newsh = s_malloc(hdrlen+newlen+<span class="number">1</span>);</span><br><span class="line">        <span class="keyword">if</span> (newsh == <span class="literal">NULL</span>) <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line">        <span class="built_in">memcpy</span>((<span class="keyword">char</span>*)newsh+hdrlen, s, len+<span class="number">1</span>);</span><br><span class="line">        s_free(sh);</span><br><span class="line">        s = (<span class="keyword">char</span>*)newsh+hdrlen;</span><br><span class="line">        s[<span class="number">-1</span>] = type;</span><br><span class="line">        sdssetlen(s, len);</span><br><span class="line">    &#125;</span><br><span class="line">    sdssetalloc(s, newlen);</span><br><span class="line">    <span class="keyword">return</span> s;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>redis对<code>sdshdr</code>结构体的操作总是传入<code>buf</code>指针，通过<code>buf[-1]</code>来判断类型，再进行下一步操作。如果<code>avail</code>足够用，则直接增加<code>len</code>即可。否则，先确定新字符串的长度，然后尽可能多的尝试分配内存，再检查一下<code>type</code>是否发生了变化（比如需要用16位的length来代替8位的length），如果没发生变化，则返回<code>realloc</code>后的指针即可，否则需要重新申请一块内存，把字符串内的数据copy过去后，再修改header信息。</p>
+<h2 id="链表"><a href="#链表" class="headerlink" title="链表"></a>链表</h2><p>相对来说链表比较简单，redis实现了双向链表：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">listNode</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">listNode</span> *<span class="title">prev</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">listNode</span> *<span class="title">next</span>;</span></span><br><span class="line">    <span class="keyword">void</span> *value;</span><br><span class="line">&#125; listNode;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">listIter</span> &#123;</span></span><br><span class="line">    listNode *next;</span><br><span class="line">    <span class="keyword">int</span> direction;</span><br><span class="line">&#125; listIter;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">list</span> &#123;</span></span><br><span class="line">    listNode *head;</span><br><span class="line">    listNode *tail;</span><br><span class="line">    <span class="keyword">void</span> *(*dup)(<span class="keyword">void</span> *ptr);</span><br><span class="line">    <span class="keyword">void</span> (*<span class="built_in">free</span>)(<span class="keyword">void</span> *ptr);</span><br><span class="line">    <span class="keyword">int</span> (*match)(<span class="keyword">void</span> *ptr, <span class="keyword">void</span> *key);</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> len;</span><br><span class="line">&#125; <span class="built_in">list</span>;</span><br></pre></td></tr></table></figure>
+
+<p><code>listNode</code>定义了前驱、后继节点和指向实际数据的指针； <code>list</code>包含了头、尾指针、链表长度，以及节点复制、释放、比较的函数指针；<code>listIter</code>是迭代器。其他的基本链表操作函数就忽略了。</p>
+<h2 id="字典"><a href="#字典" class="headerlink" title="字典"></a>字典</h2><p>Redis的字典使用了hash表作为底层实现，如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictEntry</span> &#123;</span></span><br><span class="line">    <span class="keyword">void</span> *key; </span><br><span class="line">    <span class="keyword">union</span> &#123;</span><br><span class="line">        <span class="keyword">void</span> *val;</span><br><span class="line">        <span class="keyword">uint64_t</span> u64;</span><br><span class="line">        <span class="keyword">int64_t</span> s64;</span><br><span class="line">        <span class="keyword">double</span> d;</span><br><span class="line">    &#125; v;  <span class="comment">// value，如果是基本类型则可以不需要额外空间</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">dictEntry</span> *<span class="title">next</span>;</span>  <span class="comment">// 下一个entry</span></span><br><span class="line">&#125; dictEntry;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictType</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint64_t</span> (*hashFunction)(<span class="keyword">const</span> <span class="keyword">void</span> *key);   <span class="comment">// 计算key的hash值</span></span><br><span class="line">    <span class="keyword">void</span> *(*keyDup)(<span class="keyword">void</span> *privdata, <span class="keyword">const</span> <span class="keyword">void</span> *key);  <span class="comment">// 复制key</span></span><br><span class="line">    <span class="keyword">void</span> *(*valDup)(<span class="keyword">void</span> *privdata, <span class="keyword">const</span> <span class="keyword">void</span> *obj);   <span class="comment">// 复制value</span></span><br><span class="line">    <span class="keyword">int</span> (*keyCompare)(<span class="keyword">void</span> *privdata, <span class="keyword">const</span> <span class="keyword">void</span> *key1, <span class="keyword">const</span> <span class="keyword">void</span> *key2); <span class="comment">// 比较key</span></span><br><span class="line">    <span class="keyword">void</span> (*keyDestructor)(<span class="keyword">void</span> *privdata, <span class="keyword">void</span> *key);  <span class="comment">// 释放key</span></span><br><span class="line">    <span class="keyword">void</span> (*valDestructor)(<span class="keyword">void</span> *privdata, <span class="keyword">void</span> *obj);    <span class="comment">// 释放value</span></span><br><span class="line">&#125; dictType;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictht</span> &#123;</span></span><br><span class="line">    dictEntry **table;  <span class="comment">// dictEntry[N]代表了hash值为N的桶（数组）</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> size; <span class="comment">// table数组的长度</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> sizemask; <span class="comment">// 方便获取hash值对应到哪个桶</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> used;  <span class="comment">// 一共保存了多少个节点</span></span><br><span class="line">&#125; dictht;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dict</span> &#123;</span></span><br><span class="line">    dictType *type;  <span class="comment">// 节点操作函数指针集合</span></span><br><span class="line">    <span class="keyword">void</span> *privdata;  <span class="comment">// 私有数据，方便操作hash表</span></span><br><span class="line">    dictht ht[<span class="number">2</span>];        <span class="comment">// 维护了两个hash表，ht[1]主要用来进行rehash，一般使用ht[0]</span></span><br><span class="line">    <span class="keyword">long</span> rehashidx; <span class="comment">// rehash索引，-1表示没有在rehash</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> iterators; <span class="comment">// 一共有多少个相关的iterator</span></span><br><span class="line">&#125; dict;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">dictIterator</span> &#123;</span></span><br><span class="line">    dict *d;  <span class="comment">// 指向dict的指针</span></span><br><span class="line">    <span class="keyword">long</span> index;  <span class="comment">// 索引值</span></span><br><span class="line">    <span class="keyword">int</span> table;  <span class="comment">// 应该访问dict.ht[0]还是dict.ht[1]</span></span><br><span class="line">    <span class="keyword">int</span>  safe;  <span class="comment">// 是否为安全模式，如果为1表示可以在迭代期间进行add、find等操作，否则只能执行dictNext()</span></span><br><span class="line">    dictEntry *entry, *nextEntry; <span class="comment">// 当前的entry和下一个entry</span></span><br><span class="line">    <span class="comment">/* unsafe iterator fingerprint for misuse detection. */</span></span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> fingerprint;  <span class="comment">// 迭代器指纹，表示字典是否在迭代期间是否变化</span></span><br><span class="line">&#125; dictIterator;</span><br></pre></td></tr></table></figure>
+
+<p>Hash表的桶长度必须为2的倍数（计为N），这样对N求模的时候，可以改为对N-1求与。如果hash冲突，则用<code>dictEntry-&gt;next</code>来串起来形成单链表。</p>
+<p>这样做另一个好处是，在扩表rehash的时候，某个桶里的key只能被重新rehash到特定的两个桶里。比如桶大小为0b1000，那么对于任意的key，会落在hash(key)&amp;0b111的桶内，计为b0。如果桶增长为0b10000，那么会落在hash(key)&amp;0b1111=(hash(key)&amp;0b1000) | (hash(key)&amp;0b111)，即取决于hash(key)写为二进制后的第4位是否为1。当然更重要的是缩表时，由于某些桶也只能映射到同一个桶里，那么把两个链表连在一起就可以了。不管扩表还是缩表，新的hash表桶数量还是取决于节点数。</p>
+<p>Redis的rehash过程是渐进式的，如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">dictRehash</span><span class="params">(dict *d, <span class="keyword">int</span> n)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">int</span> empty_visits = n*<span class="number">10</span>; <span class="comment">/* Max number of empty buckets to visit. */</span></span><br><span class="line">    <span class="keyword">if</span> (!dictIsRehashing(d)) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">while</span>(n-- &amp;&amp; d-&gt;ht[<span class="number">0</span>].used != <span class="number">0</span>) &#123;</span><br><span class="line">        dictEntry *de, *nextde;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Note that rehashidx can't overflow as we are sure there are more</span></span><br><span class="line"><span class="comment">         * elements because ht[0].used != 0 */</span></span><br><span class="line">        assert(d-&gt;ht[<span class="number">0</span>].size &gt; (<span class="keyword">unsigned</span> <span class="keyword">long</span>)d-&gt;rehashidx);</span><br><span class="line">        <span class="keyword">while</span>(d-&gt;ht[<span class="number">0</span>].table[d-&gt;rehashidx] == <span class="literal">NULL</span>) &#123;</span><br><span class="line">            d-&gt;rehashidx++;</span><br><span class="line">            <span class="keyword">if</span> (--empty_visits == <span class="number">0</span>) <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        de = d-&gt;ht[<span class="number">0</span>].table[d-&gt;rehashidx];</span><br><span class="line">        <span class="comment">/* Move all the keys in this bucket from the old to the new hash HT */</span></span><br><span class="line">        <span class="keyword">while</span>(de) &#123;</span><br><span class="line">            <span class="keyword">uint64_t</span> h;</span><br><span class="line"></span><br><span class="line">            nextde = de-&gt;next;</span><br><span class="line">            <span class="comment">/* Get the index in the new hash table */</span></span><br><span class="line">            h = dictHashKey(d, de-&gt;key) &amp; d-&gt;ht[<span class="number">1</span>].sizemask;</span><br><span class="line">            de-&gt;next = d-&gt;ht[<span class="number">1</span>].table[h];</span><br><span class="line">            d-&gt;ht[<span class="number">1</span>].table[h] = de;</span><br><span class="line">            d-&gt;ht[<span class="number">0</span>].used--;</span><br><span class="line">            d-&gt;ht[<span class="number">1</span>].used++;</span><br><span class="line">            de = nextde;</span><br><span class="line">        &#125;</span><br><span class="line">        d-&gt;ht[<span class="number">0</span>].table[d-&gt;rehashidx] = <span class="literal">NULL</span>;</span><br><span class="line">        d-&gt;rehashidx++;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Check if we already rehashed the whole table... */</span></span><br><span class="line">    <span class="keyword">if</span> (d-&gt;ht[<span class="number">0</span>].used == <span class="number">0</span>) &#123;</span><br><span class="line">        zfree(d-&gt;ht[<span class="number">0</span>].table);</span><br><span class="line">        d-&gt;ht[<span class="number">0</span>] = d-&gt;ht[<span class="number">1</span>];</span><br><span class="line">        _dictReset(&amp;d-&gt;ht[<span class="number">1</span>]);</span><br><span class="line">        d-&gt;rehashidx = <span class="number">-1</span>;</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* More to rehash... */</span></span><br><span class="line">    <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>Redis每次只处理10*n个桶，那么如果刚巧这些桶都没有数据，那么可能这一趟下来一个节点也不处理。rehashidx代表了正在rehash哪个桶，每次rehash的时候都是从ht[0]迁移到ht[1]，对于每个节点，会从ht[0]删除，再加到ht[1]里。最后检查ht[0]-&gt;used是否为0，以判断rehash是否结束。如果结束，则释放ht[0]，将ht[0]指向ht[1]，清空ht[1]，并重置rehashidx。</p>
+<p>渐进式rehash的好处是不会长时间阻塞（除非某个桶里的节点数非常多，当然也可以改成按节点个数来决定一趟rehash持续多长时间，但暂且不论），但对其他操作会有一定影响。不过redis单线程的特性会减少非常多的锁和同步带来的问题（比如多线程环境下对rehashidx的操作必须加锁，移动节点也必须加锁来保证原子性），因此这些处理会变得比较简单，比如添加操作：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">dictEntry *<span class="title">dictAddRaw</span><span class="params">(dict *d, <span class="keyword">void</span> *key, dictEntry **existing)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">long</span> index;</span><br><span class="line">    dictEntry *entry;</span><br><span class="line">    dictht *ht;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (dictIsRehashing(d)) _dictRehashStep(d);</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Get the index of the new element, or -1 if</span></span><br><span class="line"><span class="comment">     * the element already exists. */</span></span><br><span class="line">    <span class="keyword">if</span> ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == <span class="number">-1</span>)</span><br><span class="line">        <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Allocate the memory and store the new entry.</span></span><br><span class="line"><span class="comment">     * Insert the element in top, with the assumption that in a database</span></span><br><span class="line"><span class="comment">     * system it is more likely that recently added entries are accessed</span></span><br><span class="line"><span class="comment">     * more frequently. */</span></span><br><span class="line">    ht = dictIsRehashing(d) ? &amp;d-&gt;ht[<span class="number">1</span>] : &amp;d-&gt;ht[<span class="number">0</span>];</span><br><span class="line">    entry = zmalloc(<span class="keyword">sizeof</span>(*entry));</span><br><span class="line">    entry-&gt;next = ht-&gt;table[index];</span><br><span class="line">    ht-&gt;table[index] = entry;</span><br><span class="line">    ht-&gt;used++;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Set the hash entry fields. */</span></span><br><span class="line">    dictSetKey(d, entry, key);</span><br><span class="line">    <span class="keyword">return</span> entry;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以看出每次添加的时候都会尝试推进rehash过程（如果存在的话），然后根据rehashidx向对应的ht里插入数据；类似的，查询时两个表都会查。不过扩表和缩表的时机暂时没查到，据说和负载因子（<code>used/size</code>）有关，过大会扩表，过小会缩表。</p>
+<p>还有一个问题在于rehash时迭代器的行为，迭代器分为safe和unsafe两种，safe的话则会增加dict的迭代器计数（这个计数器大于0时会禁止rehash），unsafe则会记下当前字典的指纹（hash值，取决于两个hash表的指针值、size、used），在释放的时候如果指纹不匹配则报错。遍历就是挨个桶遍历，每个桶顺着链表去查，遍历完一个ht后再遍历下一个，相关代码如下。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">dictEntry *<span class="title">dictNext</span><span class="params">(dictIterator *iter)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">while</span> (<span class="number">1</span>) &#123;</span><br><span class="line">        <span class="keyword">if</span> (iter-&gt;entry == <span class="literal">NULL</span>) &#123;</span><br><span class="line">            dictht *ht = &amp;iter-&gt;d-&gt;ht[iter-&gt;table];</span><br><span class="line">            <span class="keyword">if</span> (iter-&gt;index == <span class="number">-1</span> &amp;&amp; iter-&gt;table == <span class="number">0</span>) &#123;</span><br><span class="line">                <span class="keyword">if</span> (iter-&gt;safe)</span><br><span class="line">                    iter-&gt;d-&gt;iterators++;</span><br><span class="line">                <span class="keyword">else</span></span><br><span class="line">                    iter-&gt;fingerprint = dictFingerprint(iter-&gt;d);</span><br><span class="line">            &#125;</span><br><span class="line">            iter-&gt;index++;</span><br><span class="line">            <span class="keyword">if</span> (iter-&gt;index &gt;= (<span class="keyword">long</span>) ht-&gt;size) &#123;</span><br><span class="line">                <span class="keyword">if</span> (dictIsRehashing(iter-&gt;d) &amp;&amp; iter-&gt;table == <span class="number">0</span>) &#123;</span><br><span class="line">                    iter-&gt;table++;</span><br><span class="line">                    iter-&gt;index = <span class="number">0</span>;</span><br><span class="line">                    ht = &amp;iter-&gt;d-&gt;ht[<span class="number">1</span>];</span><br><span class="line">                &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                    <span class="keyword">break</span>;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">            iter-&gt;entry = ht-&gt;table[iter-&gt;index];</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            iter-&gt;entry = iter-&gt;nextEntry;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (iter-&gt;entry) &#123;</span><br><span class="line">            <span class="comment">/* We need to save the 'next' here, the iterator user</span></span><br><span class="line"><span class="comment">             * may delete the entry we are returning. */</span></span><br><span class="line">            iter-&gt;nextEntry = iter-&gt;entry-&gt;next;</span><br><span class="line">            <span class="keyword">return</span> iter-&gt;entry;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="literal">NULL</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>最后一个问题在于<code>dictScan</code>函数</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">dictScan</span><span class="params">(dict *d,</span></span></span><br><span class="line"><span class="function"><span class="params">                       <span class="keyword">unsigned</span> <span class="keyword">long</span> v,</span></span></span><br><span class="line"><span class="function"><span class="params">                       dictScanFunction *fn,</span></span></span><br><span class="line"><span class="function"><span class="params">                       dictScanBucketFunction* bucketfn,</span></span></span><br><span class="line"><span class="function"><span class="params">                       <span class="keyword">void</span> *privdata)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    dictht *t0, *t1;</span><br><span class="line">    <span class="keyword">const</span> dictEntry *de, *next;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> m0, m1;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (dictSize(d) == <span class="number">0</span>) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (!dictIsRehashing(d)) &#123;</span><br><span class="line">        t0 = &amp;(d-&gt;ht[<span class="number">0</span>]);</span><br><span class="line">        m0 = t0-&gt;sizemask;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Emit entries at cursor */</span></span><br><span class="line">        <span class="keyword">if</span> (bucketfn) bucketfn(privdata, &amp;t0-&gt;table[v &amp; m0]);</span><br><span class="line">        de = t0-&gt;table[v &amp; m0];</span><br><span class="line">        <span class="keyword">while</span> (de) &#123;</span><br><span class="line">            next = de-&gt;next;</span><br><span class="line">            fn(privdata, de);</span><br><span class="line">            de = next;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Set unmasked bits so incrementing the reversed cursor</span></span><br><span class="line"><span class="comment">         * operates on the masked bits */</span></span><br><span class="line">        v |= ~m0;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Increment the reverse cursor */</span></span><br><span class="line">        v = rev(v);</span><br><span class="line">        v++;</span><br><span class="line">        v = rev(v);</span><br><span class="line"></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        t0 = &amp;d-&gt;ht[<span class="number">0</span>];</span><br><span class="line">        t1 = &amp;d-&gt;ht[<span class="number">1</span>];</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Make sure t0 is the smaller and t1 is the bigger table */</span></span><br><span class="line">        <span class="keyword">if</span> (t0-&gt;size &gt; t1-&gt;size) &#123;</span><br><span class="line">            t0 = &amp;d-&gt;ht[<span class="number">1</span>];</span><br><span class="line">            t1 = &amp;d-&gt;ht[<span class="number">0</span>];</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        m0 = t0-&gt;sizemask;</span><br><span class="line">        m1 = t1-&gt;sizemask;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Emit entries at cursor */</span></span><br><span class="line">        <span class="keyword">if</span> (bucketfn) bucketfn(privdata, &amp;t0-&gt;table[v &amp; m0]);</span><br><span class="line">        de = t0-&gt;table[v &amp; m0];</span><br><span class="line">        <span class="keyword">while</span> (de) &#123;</span><br><span class="line">            next = de-&gt;next;</span><br><span class="line">            fn(privdata, de);</span><br><span class="line">            de = next;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">/* Iterate over indices in larger table that are the expansion</span></span><br><span class="line"><span class="comment">         * of the index pointed to by the cursor in the smaller table */</span></span><br><span class="line">        <span class="keyword">do</span> &#123;</span><br><span class="line">            <span class="comment">/* Emit entries at cursor */</span></span><br><span class="line">            <span class="keyword">if</span> (bucketfn) bucketfn(privdata, &amp;t1-&gt;table[v &amp; m1]);</span><br><span class="line">            de = t1-&gt;table[v &amp; m1];</span><br><span class="line">            <span class="keyword">while</span> (de) &#123;</span><br><span class="line">                next = de-&gt;next;</span><br><span class="line">                fn(privdata, de);</span><br><span class="line">                de = next;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            <span class="comment">/* Increment the reverse cursor not covered by the smaller mask.*/</span></span><br><span class="line">            v |= ~m1;</span><br><span class="line">            v = rev(v);</span><br><span class="line">            v++;</span><br><span class="line">            v = rev(v);</span><br><span class="line"></span><br><span class="line">            <span class="comment">/* Continue while bits covered by mask difference is non-zero */</span></span><br><span class="line">        &#125; <span class="keyword">while</span> (v &amp; (m0 ^ m1));</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> v;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>fn</code>和<code>bucketfn</code>分别代表扫到一个节点和扫到一个桶时要调用的自定义函数。这里<code>v</code>是一个游标（cursor），初始可以设置为0，某种意义上代表了要扫哪个bucket，也是这个扫表算法的核心：从二进制的高位开始递增，比如当mask为0b111时，0b000会自增为0b100。核心算法为<code>v |= ~m0; v = rev(v); v++; v = rev(v);</code>，由于高位被置为1（<code>v |= ~m0</code>），那么反转后自增再反转，就一定会让有效的最高位自增1。</p>
+<p>而对于正在rehash的表，则会先去扫<code>ht[0]-&gt;mask&amp;v</code>和<code>ht[1]-&gt;mask&amp;v</code>这两个桶，依次扫size较大的那个hash table有而size较小的hash table没有的桶（自增算法同上），最后v会自增到以较小的mask为掩码、按高位自增的下一个数字，并返回。下次调用时，会以这个数字先开始扫两个表对应的桶，再作为低位、从高位开始自增并扫桶，直到它自增到以较小的mask为掩码、按高位自增的下一个数字。举个例子，当较大的mask为0b11111，较小的mask为0b111，v为0时，会：</p>
+<ul>
+<li>扫ht[0][0]和ht[1][0]，然后依次扫ht[1]的0b10000、0b01000、0b11000，然后返回0b100</li>
+<li>扫ht[0][0b100]和ht[1][0b100]，然后依次扫ht[1]的0b10100、0b01100、0b11100，然后返回0b010</li>
+<li>扫ht[0][0b10]和ht[1][0b10]，然后依次扫ht[1]的0b10010、0b01010、0b11010，然后返回0b110</li>
+<li>扫ht[0][0b110]和ht[1][0b110]，然后依次扫ht[1]的0b10110、0b01110、0b11110，然后返回0b001</li>
+<li>…</li>
+<li>扫ht[0][0b111]和ht[1][0b111]，然后依次扫ht[1]的0b10111、0b01111、0b11111，然后返回0</li>
+</ul>
+<p>顺序为0、16 、8、24、4、20、12、28、2、18、10、26、6、22、14、30、1、17、9、25、5、21、13、29、3、19、11、27、7、23、15、31</p>
+<p>其中按位反转算法如下，原理我也不懂，但这个算法可以把比如0b00000010反转为0b01000000</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/* Function to reverse bits. Algorithm from:</span></span><br><span class="line"><span class="comment"> * http://graphics.stanford.edu/~seander/bithacks.html#ReverseParallel */</span></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">rev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">long</span> v)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> s = <span class="number">8</span> * <span class="keyword">sizeof</span>(v); <span class="comment">// bit size; must be power of 2</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> mask = ~<span class="number">0</span>;</span><br><span class="line">    <span class="keyword">while</span> ((s &gt;&gt;= <span class="number">1</span>) &gt; <span class="number">0</span>) &#123;</span><br><span class="line">        mask ^= (mask &lt;&lt; s);</span><br><span class="line">        v = ((v &gt;&gt; s) &amp; mask) | ((v &lt;&lt; s) &amp; ~mask);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> v;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>粗看起来，这种扫表方式和正常的逐次扫表相比，并没有什么特别的优势。但如前文所述，扩表的时候，一个key只可能被rehash到低位和原桶一样的桶里；缩表的时候，也一定会被rehash到hash(key)低位对应的桶里。因此，比如一个桶从0b111扩展到0b11111，如果0b100被扫过、v变成了0b010，那么0b??100再也不会被扫到，因为按翻转后的顺序，0b??100&lt;0b00010，而之后是从0b00010开始自增的，且不会漏扫（不考虑新增的节点）。类似的，如果从0b11111缩表到0b111，如果0b00000被扫过、v变成了0b10000，那么接下来会按0b000开始扫缩表后的桶，这样的话可能会重复扫这一个桶，但不会漏扫。而正常的按顺序扫表，缩表的时候很可能漏扫一片，扩表的时候则很可能会重复扫一片。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/redis/" rel="tag"># redis</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/09/24/jvm-exception/" rel="next" title="JVM和异常处理">
+                  <i class="fa fa-chevron-left"></i> JVM和异常处理
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#字符串-字节流"><span class="nav-number">1.</span> <span class="nav-text">字符串/字节流</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#链表"><span class="nav-number">2.</span> <span class="nav-text">链表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#字典"><span class="nav-number">3.</span> <span class="nav-text">字典</span></a></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">20</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">25</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
