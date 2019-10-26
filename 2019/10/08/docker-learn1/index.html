@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="最近需要把某个服务容器化后搞到K8S上，提高集群利用率，因此学习一下docker和K8S 安装执行wget -qO- https://get.docker.com/ | sh，输入密码即可。之后可能会报个权限错Got permission denied while trying to connect to the Docker daemon socket at，执行sudo usermod -aG">
+<meta name="keywords" content="docker,kubernetes">
+<meta property="og:type" content="article">
+<meta property="og:title" content="docker学习（1）">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/10/08/docker-learn1/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="最近需要把某个服务容器化后搞到K8S上，提高集群利用率，因此学习一下docker和K8S 安装执行wget -qO- https://get.docker.com/ | sh，输入密码即可。之后可能会报个权限错Got permission denied while trying to connect to the Docker daemon socket at，执行sudo usermod -aG">
+<meta property="og:locale" content="cn">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/container-what-is-container.png">
+<meta property="og:updated_time" content="2019-10-25T08:01:36.060Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="docker学习（1）">
+<meta name="twitter:description" content="最近需要把某个服务容器化后搞到K8S上，提高集群利用率，因此学习一下docker和K8S 安装执行wget -qO- https://get.docker.com/ | sh，输入密码即可。之后可能会报个权限错Got permission denied while trying to connect to the Docker daemon socket at，执行sudo usermod -aG">
+<meta name="twitter:image" content="https://maxiaoxin.github.io/images/container-what-is-container.png">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/10/08/docker-learn1/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>docker学习（1） | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/10/08/docker-learn1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">docker学习（1）
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-10-08 00:00:00" itemprop="dateCreated datePublished" datetime="2019-10-08T00:00:00+08:00">2019-10-08</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-10-25 16:01:36" itemprop="dateModified" datetime="2019-10-25T16:01:36+08:00">2019-10-25</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>最近需要把某个服务容器化后搞到K8S上，提高集群利用率，因此学习一下docker和K8S</p>
+<h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><p>执行<code>wget -qO- https://get.docker.com/ | sh</code>，输入密码即可。之后可能会报个权限错<code>Got permission denied while trying to connect to the Docker daemon socket at</code>，执行<code>sudo usermod -aG docker maxiaoxin &amp;&amp; newgrp - docker</code>即可。</p>
+<h2 id="基本概念"><a href="#基本概念" class="headerlink" title="基本概念"></a>基本概念</h2><p>docker的基本架构如下图所示，从这个意义上讲，docker更像个隔离机制而非虚拟机，毕竟虚拟机是可以允许比如在linux上跑一个windows虚拟机的，而docker不能直接做到这一点。</p>
+<p>而且和虚拟机不同的是，严格来说虚拟机是模拟了一个完整的主机，至少是一个完整的操作系统，并且理论上应该可以打一个包含所有运行状态的snapshot（至少包括CPU状态、内存状态和文件状态）。而docker的镜像只包含文件状态，并且非常不建议一个container起多个进程。</p>
+<p><img src="/images/container-what-is-container.png" alt="docker基本架构"></p>
+<ul>
+<li>容器（container）：独立运行的一个或一组应用，以及它们的运行态环境。</li>
+<li>镜像（image）：运行容器的所有基础设施，包括代码、运行库、依赖和其他文件系统的对象（类似snapshot）</li>
+<li>仓库（repository）：类似git或maven中的仓库，支持版本控制</li>
+</ul>
+<h2 id="常用命令"><a href="#常用命令" class="headerlink" title="常用命令"></a>常用命令</h2><ul>
+<li>登录：<code>docker login ${uri}</code></li>
+<li>从仓库pull一个镜像：<code>docker pull ${host}/${image_name}:${version}</code></li>
+<li>上传镜像：<code>docker push ${user_name}/${image_name}</code></li>
+<li>列出本地镜像：<code>docker images</code></li>
+<li>删除镜像：<code>docker rmi ${image_id}</code></li>
+<li>导出镜像文件到本地：<code>docker save -o ${file_name} ${image_name}:${tag}</code></li>
+<li>导入镜像文件：<code>docker load --input ${file_name}</code></li>
+<li>对容器进行快照，生成image：<code>docker commit ${options} ${container_ID} ${image_name}:${tag}</code>，很像git的commit</li>
+<li>使用镜像创建一个容器：<code>docker create ${image_name}:${version}</code></li>
+<li>创建并运行一个容器：<code>docker run ${options} ${image_name}:${version} ${args}</code>，其中<code>-i</code>表示打开容器的标准输入，<code>-t</code>告诉docker为容器建立一个命令行终端，<code>-d</code>表示使容器在后台运行，<code>-c</code>可以调整容器的CPU优先级，<code>--restart=always</code>表示无论容器返回码是什么都立刻重启，<code>--restart=on-failure:5</code>表示当返回码非0时重启，且可选择重启次数</li>
+<li>启动已停止的容器：<code>docker start ${container_ID}</code></li>
+<li>终止/强制停止容器：<code>docker stop ${container_ID}</code>，<code>docker kill ${container_ID}</code></li>
+<li>删除一个已停止的容器：<code>docker rm ${container_ID}</code></li>
+<li>搜索镜像：<code>docker search ${key_word}</code></li>
+<li>查看容器：<code>docker ps ${options}</code>，其中不加任何参数的话是查看运行中的容器，<code>-a</code>查看所有容器（包括已停止的），<code>-l</code>查看最新创建的容器，<code>-n</code>是个数，<code>-q</code>是只列出容器ID</li>
+</ul>
+<p>当然不是所有情况都适合用commit命令，也可以用<code>docker build</code>来创建一个新的镜像，需要先创建一个Dockerfile，比如</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># This is a comment</span></span><br><span class="line">FROM centos:6.8</span><br><span class="line">MAINTAINER MXX</span><br><span class="line">RUN <span class="built_in">echo</span> <span class="string">"hello world"</span></span><br></pre></td></tr></table></figure>
+
+<p>其中<code>FROM</code>一定要写，表示继承自哪个image。如果是空的话可以写为<code>FROM scratch</code>，但一般不太会这么写；<code>MAINTAINER</code>是作者名；<code>RUN</code>代表要执行的命令。</p>
+<p>另外还有些比较常见的命令，比如</p>
+<ul>
+<li><code>ADD/COPY</code>用来复制本地文件到镜像</li>
+<li><code>EXPOSE</code>命令向外部开放端口，但只是个声明</li>
+<li><code>CMD/ENTRYPOINT</code>命令用来描述容器启动后运行的程序等</li>
+<li><code>WORKDIR</code>工作目录，如果没有会创建</li>
+<li><code>USER</code>当前用户，值得一提的是我在用centos的时候，如果不加上<code>USER root</code>的话，某些情况会报权限错</li>
+</ul>
+<p>然后执行<code>docker build . -t ${image_name}:${tag}</code>就可以生成了。</p>
+<p>值得一提的是docker有个概念layer，意指dockerfile的每条指令，或者每个commit都会产生一个“层”（类似git里一个分支上有多个commit）。之所以有这个概念，是因为docker的文件系统采用了UnionFS，以减少修改文件带来的额外存储开销，也就是只存储差分信息。假如差分存储的代价比较大（比如差分的单位是文件，假如某个1GB的文件只修改了1个byte，那么也会额外产生1GB的信息），那么层越多，镜像越大——当然层越多，不同镜像能共享的文件也就越多，这个也需要取舍。</p>
+<p>一般来说启动的还是一个一直运行的服务，而如果依赖比较小的话，可以不用<code>centos</code>这样“重”的基础镜像，参考<a href="https://zhuanlan.zhihu.com/p/54640767" target="_blank" rel="noopener">最小化 Java 镜像的常用技巧</a>。不过比较坑的一点是<code>alpine</code>用的是<code>musl</code>而不是<code>glibc</code>，这将导致某些系统调用不兼容，比如<code>qsort_r</code>。当时我差点改<code>musl</code>源代码了，后来上网找了一个手写的块排加强版代码直接用。</p>
+<h2 id="kubernetes相关"><a href="#kubernetes相关" class="headerlink" title="kubernetes相关"></a>kubernetes相关</h2><p>docker的任务是创建镜像，而如果调度计算资源来运行镜像需要靠kubernetes（k8s）。客户端怎么下载和配置就忽略过了，假设我们已经搞了一个镜像<code>hello/world</code>，公司的registry是<code>foo.bar.net</code>，那么常见的命令包括：</p>
+<ul>
+<li>创建镜像：<code>docker build . -t foo.bar.net/hello/world</code>，注意这里要写全，最好把<code>tag</code>也写上</li>
+<li>登录：<code>docker login foo.bar.net</code></li>
+<li>上传：<code>docker push foo.bar.net/hello/world</code></li>
+<li>创建pod：<code>kubectl create -f helloworld-deployment.yaml</code></li>
+<li>创建service：<code>kubectl create -f helloworld_service.yaml</code></li>
+<li>创建ingress：<code>kubectl create -f helloworld-ingress.yaml</code></li>
+<li>查看状态：<code>kubectl get pod -o wide|grep hello-world</code></li>
+</ul>
+<p>核心在于pod、service、ingress这三个概念，对应的三个配置文件分别是<code>helloworld-deployment.yaml</code>、<code>helloworld_service.yaml</code>、<code>helloworld-ingress.yaml</code>。其中Pod 是一组紧密关联的容器集合，Service 是应用服务的抽象，通过 labels 为应用提供负载均衡和服务发现，而Ingress可以简单的理解成k8s内部的nginx, 和service配合，用作负载均衡器。具体示例可以参考<a href="https://www.mirantis.com/blog/introduction-to-yaml-creating-a-kubernetes-deployment/" target="_blank" rel="noopener">Introduction to YAML: Creating a Kubernetes deployment</a>，总之是一大堆和资源调度相关的配置。</p>
+<p>刚才碰到的一个问题是，上传的文件大于1MB会报错413，那么需要在ingress的配置里加入<code>metadata:annotations:nginx.ingress.kubernetes.io/proxy-body-size: &quot;25m&quot;</code></p>
+<p>有时候也需要rewrite url，需要加上<code>nginx.ingress.kubernetes.io/rewrite-target</code>，具体怎么用参考<a href="https://kubernetes.github.io/ingress-nginx/examples/rewrite/" target="_blank" rel="noopener">Rewrite</a></p>
+<h3 id="配置和挂载"><a href="#配置和挂载" class="headerlink" title="配置和挂载"></a>配置和挂载</h3><p>一般来说还是应该将配置文件和docker镜像分开，在运行的时候从某个地方读，这里我常用的有三种：configMap, secrets和emptyDir。</p>
+<ul>
+<li>emptyDir主要用来在pod重启时不丢失这个路径下的信息，比如某个服务可能挂了，被K8S重新拉起，假如没有一个地方存储日志，就不能确定挂掉的原因了。但如果pod被删掉了，那么emptyDir也会自动删掉。</li>
+<li>configMap主要存放配置信息，一种用法是把所有配置信息的键值对直接写进这个文件，然后通过环境变量传进容器。另一种是通过类似<code>kubectl create configmap ${config_name} --from-file=${dir_path}</code>创建，然后通过volumes的方式挂载到某个路径下，到时候去这里读取。但如果用yaml的方式创建/更新的话，无法引用外部文件，必须写在一个yaml配置文件里。如果是挂载目录的方式的话，至少默认这个目录是只读的。</li>
+<li>secrets和configMap很像，不过主要用来存储敏感信息，比如用户名密码之类的。但一般不会在配置文件里写明文，而是写base64编码后的信息。比如要把一个keytab写进去，那么就可以用<code>cat ${file_name} | base64</code>得到其编码，再写到yaml配置文件里。至于secrets的安全性就不清楚了。类似的，默认挂载后的目录是只读的。</li>
+</ul>
+<p>我试了一下，采用挂载的方式，如果更新configMap和secrets后，pod上对应目录下的文件也会更新。至于环境变量是容器运行的时候写的，当然不能更新了。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/docker/" rel="tag"># docker</a>
+            
+              <a href="/tags/kubernetes/" rel="tag"># kubernetes</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/09/29/redis-read1/" rel="next" title="redis学习（1） 字节流、链表和字典">
+                  <i class="fa fa-chevron-left"></i> redis学习（1） 字节流、链表和字典
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+                <a href="/2019/10/08/redis-read2/" rel="prev" title="redis学习（2） 压缩列表、整数集合、跳表">
+                  redis学习（2） 压缩列表、整数集合、跳表 <i class="fa fa-chevron-right"></i>
+                </a>
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#安装"><span class="nav-number">1.</span> <span class="nav-text">安装</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#基本概念"><span class="nav-number">2.</span> <span class="nav-text">基本概念</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#常用命令"><span class="nav-number">3.</span> <span class="nav-text">常用命令</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#kubernetes相关"><span class="nav-number">4.</span> <span class="nav-text">kubernetes相关</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#配置和挂载"><span class="nav-number">4.1.</span> <span class="nav-text">配置和挂载</span></a></li></ol></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">22</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">27</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>

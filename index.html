@@ -191,6 +191,371 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/10/08/redis-read2/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/10/08/redis-read2/" class="post-title-link" itemprop="url">redis学习（2） 压缩列表、整数集合、跳表</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-10-08 00:00:00" itemprop="dateCreated datePublished" datetime="2019-10-08T00:00:00+08:00">2019-10-08</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-10-26 19:59:27" itemprop="dateModified" datetime="2019-10-26T19:59:27+08:00">2019-10-26</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <h2 id="压缩列表（ziplist）"><a href="#压缩列表（ziplist）" class="headerlink" title="压缩列表（ziplist）"></a>压缩列表（ziplist）</h2><p>压缩列表是列表键和hash键的底层实现之一，如果一个列表键只包含少量列表项，且每个列表项是小整数值或长度较短的字符串时，redis就会使用压缩列表作为列表键的底层实现。</p>
+<p>显然，使用ziplist的初衷是节约内存，主要是两方面：尽量使用较小的数据类型保存较小的整数，以及取消指针。既然取消了指针，而每个节点大小都可能不同，因此ziplist采用了变长数组作为实现。数组带来的一个好处是缓存友好，而朴素的链表容易产生大量不可控的零散碎片。Ziplist的大致结构类似<code>&lt;zlbytes&gt; &lt;zltail&gt; &lt;zllen&gt; &lt;entry&gt; &lt;entry&gt; ... &lt;entry&gt; &lt;zlend&gt;</code>，相关定义如下</p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>长度(byte)</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>zlbytes</td>
+<td>uint32_t</td>
+<td>4</td>
+<td>记录整个ziplist占用的字节数</td>
+</tr>
+<tr>
+<td>zltail</td>
+<td>uint32_t</td>
+<td>4</td>
+<td>记录尾节点距离起始地址有多少字节，可以用以直接计算得到尾节点地址</td>
+</tr>
+<tr>
+<td>zllen</td>
+<td>uint16_t</td>
+<td>2</td>
+<td>记录了节点数。如果这个值等于UINT16_MAX时，需要遍历整个ziplist才能获得总节点数</td>
+</tr>
+<tr>
+<td>entryX</td>
+<td>列表节点</td>
+<td>不定</td>
+<td>具体保存数据的节点</td>
+</tr>
+<tr>
+<td>zlent</td>
+<td>uint8_t</td>
+<td>1</td>
+<td>固定为0xff，表示ziplist结尾</td>
+</tr>
+</tbody></table>
+<p>Redis没有对ziplist结构体作出定义，仅将用一个<code>char*</code>指针指代对应的ziplist，相关操作的定义和实现在<code>ziplist.h</code>和<code>ziplist.c</code>，如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_HEADER_SIZE     (sizeof(uint32_t)*2+sizeof(uint16_t))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_END_SIZE        (sizeof(uint8_t))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_BYTES(zl)       (*((uint32_t*)(zl)))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_TAIL_OFFSET(zl) (*((uint32_t*)((zl)+sizeof(uint32_t))))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_LENGTH(zl)      (*((uint16_t*)((zl)+sizeof(uint32_t)*2)))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIP_END 255</span></span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">char</span> *<span class="title">ziplistNew</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> bytes = ZIPLIST_HEADER_SIZE+ZIPLIST_END_SIZE;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *zl = zmalloc(bytes);</span><br><span class="line">    ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);</span><br><span class="line">    ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);</span><br><span class="line">    ZIPLIST_LENGTH(zl) = <span class="number">0</span>;</span><br><span class="line">    zl[bytes<span class="number">-1</span>] = ZIP_END;</span><br><span class="line">    <span class="keyword">return</span> zl;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>基本上初始化就是给头尾相关字段赋值，一个初始化后的空列表为<code>0b000000 0a000000 0000 ff</code>，和上面的说明可以匹配的上。</p>
+<p>所以核心还是<code>entry</code>的定义，ziplist的每个entry可以是一个字节数组或一个整数值，基本上每个entry都是类似<code>&lt;prevlen&gt; &lt;encoding&gt; &lt;entry-data&gt;</code>这样的结构，而对于某些entry，比如小整数，就没有<code>&lt;entry-data&gt;</code>这部分。</p>
+<p><code>&lt;prevlen&gt;</code>表示之前那个entry的长度，但只能是1字节或5字节，取决于之前那个entry的长度：如果小于等于0xfe则采用1字节，否则需要置为0xfe，后4字节作为一个整数表明其长度（要说为啥不进一步细分，可能是因为太长的entry出现频率低吧）。显然，有<code>prevlen</code>后可以很容易的从后向前遍历节点，而从前向后遍历则需要解析<code>&lt;encoding&gt;</code>字段。</p>
+<p><code>&lt;encoding&gt;</code>字段用来标明节点的类型和长度，根据类型及长度，可以分为以下几类：</p>
+<table>
+<thead>
+<tr>
+<th>编码</th>
+<th>编码长度(byte)</th>
+<th>content属性保存的值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>00pppppp</td>
+<td>1</td>
+<td>长度&lt;=0x3f的字节数组</td>
+</tr>
+<tr>
+<td>01pppppp qqqqqqqq</td>
+<td>2</td>
+<td>长度&lt;=0x3fff的字节数组</td>
+</tr>
+<tr>
+<td>10000000 qqqqqqqq rrrrrrrr ssssssss tttttttt</td>
+<td>5</td>
+<td>长度&gt;0x3fff的字节数组，这里的第一个字节前2位必须为10，后6位未定义；之后的4个字节作为整数保存字节数组长度</td>
+</tr>
+<tr>
+<td>11000000</td>
+<td>1</td>
+<td>int16_t，2字节</td>
+</tr>
+<tr>
+<td>11010000</td>
+<td>1</td>
+<td>int32_t，4字节</td>
+</tr>
+<tr>
+<td>11100000</td>
+<td>1</td>
+<td>int64_t，8字节</td>
+</tr>
+<tr>
+<td>11110000</td>
+<td>1</td>
+<td>24位有符号整数，3字节</td>
+</tr>
+<tr>
+<td>11111110</td>
+<td>1</td>
+<td>8位有符号整数，1字节</td>
+</tr>
+<tr>
+<td>1111xxxx</td>
+<td>1</td>
+<td>0-12之间的小整数，这里的xxxx介于0001和1101之间，由于不可以使用0000和1110、1111，所以只能代表0-12，且用的时候需要减一</td>
+</tr>
+<tr>
+<td>11111111</td>
+<td>1</td>
+<td>特殊entry，表示结尾</td>
+</tr>
+</tbody></table>
+<p>由于不同类型的encoding的第一个字节一定不同，因此仅根据第一个字节就可以判断enty的类型。</p>
+<p>ziplist由于涉及压缩，代码多且复杂，故只贴出插入节点相关的逻辑：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">char</span> *<span class="title">ziplistPush</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">char</span> *zl, <span class="keyword">unsigned</span> <span class="keyword">char</span> *s, <span class="keyword">unsigned</span> <span class="keyword">int</span> slen, <span class="keyword">int</span> where)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *p;</span><br><span class="line">    p = (where == ZIPLIST_HEAD) ? ZIPLIST_ENTRY_HEAD(zl) : ZIPLIST_ENTRY_END(zl);</span><br><span class="line">    <span class="keyword">return</span> __ziplistInsert(zl,p,s,slen);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">unsigned</span> <span class="keyword">char</span> *__ziplistInsert(<span class="keyword">unsigned</span> <span class="keyword">char</span> *zl, <span class="keyword">unsigned</span> <span class="keyword">char</span> *p, <span class="keyword">unsigned</span> <span class="keyword">char</span> *s, <span class="keyword">unsigned</span> <span class="keyword">int</span> slen) &#123;</span><br><span class="line">    <span class="keyword">size_t</span> curlen = intrev32ifbe(ZIPLIST_BYTES(zl)), reqlen;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> prevlensize, prevlen = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">size_t</span> offset;</span><br><span class="line">    <span class="keyword">int</span> nextdiff = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> encoding = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> value = <span class="number">123456789</span>;</span><br><span class="line">    zlentry tail;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 插入时需要获得两个信息：插入位置，和前一个entry的length</span></span><br><span class="line">    <span class="keyword">if</span> (p[<span class="number">0</span>] != ZIP_END) &#123; <span class="comment">// 检查是否在队尾</span></span><br><span class="line">        ZIP_DECODE_PREVLEN(p, prevlensize, prevlen); <span class="comment">// 如果不在，则解码前一个entry的长度和长度段的大小</span></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">char</span> *ptail = ZIPLIST_ENTRY_TAIL(zl); <span class="comment">// 尝试跳到队尾的entry</span></span><br><span class="line">        <span class="keyword">if</span> (ptail[<span class="number">0</span>] != ZIP_END) &#123; <span class="comment">// 如果队尾不为ZIP_END，说明队伍非空</span></span><br><span class="line">            prevlen = zipRawEntryLength(ptail); <span class="comment">// 尝试解码最后一个entry的长度</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 尝试压缩，包括两种情况：小整数，或者字符串代表了一个long long 可以表示的整数，比如"-987654321"</span></span><br><span class="line">    <span class="comment">// 从而确定压缩后entry的长度</span></span><br><span class="line">    <span class="keyword">if</span> (zipTryEncoding(s,slen,&amp;value,&amp;encoding)) &#123;</span><br><span class="line">        reqlen = zipIntSize(encoding); <span class="comment">// 可以根据encoding确定长度</span></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        reqlen = slen; <span class="comment">// 否则就是字符串长度</span></span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    reqlen += zipStorePrevEntryLength(<span class="literal">NULL</span>,prevlen); <span class="comment">// 加上存储prevlen需要的长度，传入NULL表示只计算长度而不写入</span></span><br><span class="line">    reqlen += zipStoreEntryEncoding(<span class="literal">NULL</span>,encoding,slen); <span class="comment">// 确定encoding字段的长度，传入NULL表示只计算长度而不写入</span></span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果不在队尾插入，那么需要保证下一个entry的prevlen字段足够长，以保存本entry的长度</span></span><br><span class="line">    <span class="keyword">int</span> forcelarge = <span class="number">0</span>;</span><br><span class="line">    nextdiff = (p[<span class="number">0</span>] != ZIP_END) ? zipPrevLenByteDiff(p,reqlen) : <span class="number">0</span>; <span class="comment">// 计算所需长度和下一个entry的prevlen字段的长度之差</span></span><br><span class="line">    <span class="keyword">if</span> (nextdiff == <span class="number">-4</span> &amp;&amp; reqlen &lt; <span class="number">4</span>) &#123; <span class="comment">// 如果本来下一个entry的prevlen字段长为5字节，而reqlen又很短的话，需要修改相关偏移量</span></span><br><span class="line">        nextdiff = <span class="number">0</span>;</span><br><span class="line">        forcelarge = <span class="number">1</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 计算新的ziplist长度，并realloc</span></span><br><span class="line">    offset = p-zl;</span><br><span class="line">    zl = ziplistResize(zl,curlen+reqlen+nextdiff);</span><br><span class="line">    p = zl+offset;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果非队尾插入，则需要移动相关内容并处理一些细节</span></span><br><span class="line">    <span class="keyword">if</span> (p[<span class="number">0</span>] != ZIP_END) &#123;</span><br><span class="line">        memmove(p+reqlen,p-nextdiff,curlen-offset<span class="number">-1</span>+nextdiff);  <span class="comment">// 移动相关内容</span></span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (forcelarge)</span><br><span class="line">            zipStorePrevEntryLengthLarge(p+reqlen,reqlen); <span class="comment">// 调整下一个entry的prevlen字段</span></span><br><span class="line">        <span class="keyword">else</span></span><br><span class="line">            zipStorePrevEntryLength(p+reqlen,reqlen);</span><br><span class="line"></span><br><span class="line">        ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+reqlen); <span class="comment">// 修改整个列表的tail偏移量</span></span><br><span class="line"></span><br><span class="line">        zipEntry(p+reqlen, &amp;tail); <span class="comment">// 解码最后一个entry</span></span><br><span class="line">        <span class="keyword">if</span> (p[reqlen+tail.headersize+tail.len] != ZIP_END) &#123; <span class="comment">// 如果对不上ZIP_END，需要做一些特殊处理</span></span><br><span class="line">            ZIPLIST_TAIL_OFFSET(zl) =                                           <span class="comment">// 至于为啥有可能对不上，官方说和nextdiff有关。。。反正我没想明白</span></span><br><span class="line">                intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+nextdiff);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123; <span class="comment">// 否则直接修改即可</span></span><br><span class="line">        ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(p-zl);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">     <span class="comment">// 如果nextdiff不为0，说明有可能调整下一个entry的长度，进而影响下下个entry的prevlen字段</span></span><br><span class="line">     <span class="comment">// 最坏情况需要把所有entry都调整并移动一遍</span></span><br><span class="line">    <span class="keyword">if</span> (nextdiff != <span class="number">0</span>) &#123;</span><br><span class="line">        offset = p-zl;</span><br><span class="line">        zl = __ziplistCascadeUpdate(zl,p+reqlen);</span><br><span class="line">        p = zl+offset;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 将要写的内容写进去</span></span><br><span class="line">    p += zipStorePrevEntryLength(p,prevlen);</span><br><span class="line">    p += zipStoreEntryEncoding(p,encoding,slen);</span><br><span class="line">    <span class="keyword">if</span> (ZIP_IS_STR(encoding)) &#123;</span><br><span class="line">        <span class="built_in">memcpy</span>(p,s,slen);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        zipSaveInteger(p,value,encoding);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="comment">// 计算调整entry总量</span></span><br><span class="line">    ZIPLIST_INCR_LENGTH(zl,<span class="number">1</span>);</span><br><span class="line">    <span class="keyword">return</span> zl;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>其实本质上和数组扩容类似，但由于entry之间有一定关联，需要注意的细节很多，所以代码很长</p>
+<h2 id="整数集合（intset）"><a href="#整数集合（intset）" class="headerlink" title="整数集合（intset）"></a>整数集合（intset）</h2><p>整数集合是集合键的底层实现之一，当一个集合只包含整数值元素，且数量不多时，会采用整数集合作为集合键的底层实现。intset被定义在<code>intset.h</code>中，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">intset</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint32_t</span> encoding; <span class="comment">// 编码方式，取值为INTSET_ENC_INT64、INTSET_ENC_INT32和INTSET_ENC_INT16</span></span><br><span class="line">    <span class="keyword">uint32_t</span> length;    <span class="comment">// contents的长度</span></span><br><span class="line">    <span class="keyword">int8_t</span> contents[];  <span class="comment">// 实际内容，从小到大排列的整数，且不重复</span></span><br><span class="line">&#125; intset;</span><br></pre></td></tr></table></figure>
+
+<p><code>contents</code>类型被声明为<code>int8_t</code>，但如何解读取决于<code>encoding</code>属性，简单来说根据<code>encoding</code>来将<code>contents</code>作为<code>int16_t[]</code>、<code>int32[]</code>、<code>int64[]</code>来处理。</p>
+<p>一个比较麻烦的地方在于如果新插入的元素比当前所有的元素占用的空间大（比如把int8_t替换为int16_t），那么redis的做法是将原数组所有元素类型升级为和新元素一样大，这个操作被称为升级（upgrade），估计是因为这么搞比较简单，大概也是图省事，intset不支持降级。其他基本上增、删、改、（二分）查等一系列操作和普通的有序数组没什么区别，这里就略过了。</p>
+<h2 id="有序集合-跳表（skiplist）"><a href="#有序集合-跳表（skiplist）" class="headerlink" title="有序集合/跳表（skiplist）"></a>有序集合/跳表（skiplist）</h2><p>redis采用跳表作为底层数据结构来实现有序集合，基本原理如下图，简单来说最底层是一串有序链表，然后按层数加索引。每个索引节点类似B+树，将所辖区间分成若干份，查找的时候根据要查找的值选择下层节点。</p>
+<p>值得注意的是有序集合<code>zset</code>元素的唯一性由<code>dict</code>保证，<code>zskiplist</code>只保证按score有序排列</p>
+<p><img src="/images/Skip_list_add_element-en.gif" alt="跳表原理"></p>
+<p>redis中相关结构体定义在<code>server.h</code>中，如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> &#123;</span></span><br><span class="line">    sds ele;              <span class="comment">// 具体的对象，默认字节流</span></span><br><span class="line">    <span class="keyword">double</span> score; <span class="comment">// 节点根据score排序</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> *<span class="title">backward</span>;</span>  <span class="comment">// 上一个节点的指针</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistLevel</span> &#123;</span>                        <span class="comment">// 层级</span></span><br><span class="line">        <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> *<span class="title">forward</span>;</span> <span class="comment">// 同层级下一个的指针</span></span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">long</span> span;                     <span class="comment">// 跨度</span></span><br><span class="line">    &#125; level[];                                                  <span class="comment">// 可变层级</span></span><br><span class="line">&#125; zskiplistNode;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">zskiplist</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> *<span class="title">header</span>, *<span class="title">tail</span>;</span>  <span class="comment">// 头节点和尾节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> length;                           <span class="comment">// 总大小</span></span><br><span class="line">    <span class="keyword">int</span> level;                                                      <span class="comment">// 最高层高</span></span><br><span class="line">&#125; zskiplist;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">zset</span> &#123;</span> <span class="comment">// 有序集合，包含一个字典和一个跳表</span></span><br><span class="line">    dict *dict;</span><br><span class="line">    zskiplist *zsl;</span><br><span class="line">&#125; zset;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> &#123;</span></span><br><span class="line">    <span class="keyword">double</span> min, max; <span class="comment">// 范围</span></span><br><span class="line">    <span class="keyword">int</span> minex, maxex; <span class="comment">// 是否包含最大最小值</span></span><br><span class="line">&#125; zrangespec;</span><br></pre></td></tr></table></figure>
+
+<p>可以看到，有序集合中，集合（不重复）是由<code>dict</code>实现的，而有序是由<code>zskiplist</code>实现的。一个比较奇葩的地方在于redis使用double来作为排序依据，而至少我没看到redis对score做了哪些特殊处理，甚至直接用<code>==</code>来比较两个double类型的参数。所以个人感觉以单score而非range的操作可能都会出问题，相同score的排序可能也有问题，但这里暂且不谈。其初始化流程如下，核心在于header节点的层级需要设为<code>ZSKIPLIST_MAXLEVEL</code>，以便可以直接从header节点开始能查找到任意节点。其实按说应该将header的score设置为<code>-MAX_DOUBLE</code>之类的值，但redis后面比较的时候并没有用到header的score，所以其实无所谓。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">zskiplistNode *<span class="title">zslCreateNode</span><span class="params">(<span class="keyword">int</span> level, <span class="keyword">double</span> score, sds ele)</span> </span>&#123;</span><br><span class="line">    zskiplistNode *zn =</span><br><span class="line">        zmalloc(<span class="keyword">sizeof</span>(*zn)+level*<span class="keyword">sizeof</span>(struct zskiplistLevel));</span><br><span class="line">    zn-&gt;score = score;</span><br><span class="line">    zn-&gt;ele = ele;</span><br><span class="line">    <span class="keyword">return</span> zn;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">zskiplist *<span class="title">zslCreate</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">int</span> j;</span><br><span class="line">    zskiplist *zsl;</span><br><span class="line"></span><br><span class="line">    zsl = zmalloc(<span class="keyword">sizeof</span>(*zsl));</span><br><span class="line">    zsl-&gt;level = <span class="number">1</span>;</span><br><span class="line">    zsl-&gt;length = <span class="number">0</span>;</span><br><span class="line">    zsl-&gt;header = zslCreateNode(ZSKIPLIST_MAXLEVEL,<span class="number">0</span>,<span class="literal">NULL</span>);</span><br><span class="line">    <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; ZSKIPLIST_MAXLEVEL; j++) &#123;</span><br><span class="line">        zsl-&gt;header-&gt;level[j].forward = <span class="literal">NULL</span>;</span><br><span class="line">        zsl-&gt;header-&gt;level[j].span = <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    zsl-&gt;header-&gt;backward = <span class="literal">NULL</span>;</span><br><span class="line">    zsl-&gt;tail = <span class="literal">NULL</span>;</span><br><span class="line">    <span class="keyword">return</span> zsl;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>查找流程很容易理解，按level从高向低查，然后从左向右查。假设要查找的score为s<sub>target</sub>，当前节点为A，正在查找第k level，下一个节点是B，那么</p>
+<ol>
+<li>如果当前节点已经查到目标score，则直接返回</li>
+<li>如果s<sub>B</sub>&lt;s<sub>target</sub>，则移动到B，转1</li>
+<li>如果level已经是0（走到最下层）则表明查找失败</li>
+<li>令level-=1，转2</li>
+</ol>
+<p>严格来说redis排序是先按score排序，如果score相同，则按元素的值<code>ele</code>排序。由于元素是唯一的，所以skiplist一定是单调递增的。</p>
+<p>可能是因为double精度的问题，或者同一个score可以有多个元素，redis不能直接根据score获得某个值，只能按查找range，其实流程也差不多。不过跳表的一个好处是可以在查找时计算出目标score的rank（在skiplist中的顺位），因为每个节点保存了<code>span</code>（区间内元素数量），那么向右走的时候累计<code>span</code>就可以获得rank</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">zslGetRank</span><span class="params">(zskiplist *zsl, <span class="keyword">double</span> score, sds ele)</span> </span>&#123;</span><br><span class="line">    zskiplistNode *x;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> rank = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">int</span> i;</span><br><span class="line"></span><br><span class="line">    x = zsl-&gt;header;</span><br><span class="line">    <span class="keyword">for</span> (i = zsl-&gt;level<span class="number">-1</span>; i &gt;= <span class="number">0</span>; i--) &#123; <span class="comment">// 向下走</span></span><br><span class="line">        <span class="keyword">while</span> (x-&gt;level[i].forward &amp;&amp; <span class="comment">// 如果能向右走</span></span><br><span class="line">            (x-&gt;level[i].forward-&gt;score &lt; score || <span class="comment">// 右边的节点比当前节点score小</span></span><br><span class="line">                (x-&gt;level[i].forward-&gt;score == score &amp;&amp; <span class="comment">// 或者相等，但ele值比当前目标值小或相等</span></span><br><span class="line">                sdscmp(x-&gt;level[i].forward-&gt;ele,ele) &lt;= <span class="number">0</span>))) &#123;</span><br><span class="line">            rank += x-&gt;level[i].span; <span class="comment">// 累计当前节点当前层的span</span></span><br><span class="line">            x = x-&gt;level[i].forward; <span class="comment">// 向右走</span></span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// 当前节点可能已经找到了，那么就直接返回</span></span><br><span class="line">        <span class="comment">// 但由于header的ele可以为Null，且header实际是无效的，所以还是要检查一下是否是x-&gt;ele是否为空</span></span><br><span class="line">        <span class="keyword">if</span> (x-&gt;ele &amp;&amp; sdscmp(x-&gt;ele,ele) == <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">return</span> rank;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>最后是插入节点，首先查找到目标位置，然后增加一个节点，此节点的level是随机出来的，创建出来后和前后节点连接起来，并更新相关的span值。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">zslRandomLevel</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123; <span class="comment">// 随机层级</span></span><br><span class="line">    <span class="keyword">int</span> level = <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">while</span> ((random()&amp;<span class="number">0xFFFF</span>) &lt; (ZSKIPLIST_P * <span class="number">0xFFFF</span>)) <span class="comment">// 取一个0~0xFFFF之间的随机数，和一个常数（这里是0.25*0xFFFF）比，如果测试通过就+1</span></span><br><span class="line">        level += <span class="number">1</span>; <span class="comment">// 合理性且不论，但基本上层级越高概率越低</span></span><br><span class="line">    <span class="keyword">return</span> (level&lt;ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL; <span class="comment">// 然后取不大于最高level的返回值</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">zskiplistNode *<span class="title">zslInsert</span><span class="params">(zskiplist *zsl, <span class="keyword">double</span> score, sds ele)</span> </span>&#123;</span><br><span class="line">    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;  <span class="comment">// 要更新的所有节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> rank[ZSKIPLIST_MAXLEVEL];  <span class="comment">// rank排行，表示这个节点在有序集合中的顺序</span></span><br><span class="line">    <span class="keyword">int</span> i, level;</span><br><span class="line"></span><br><span class="line">    serverAssert(!isnan(score));</span><br><span class="line">    x = zsl-&gt;header;</span><br><span class="line">    <span class="keyword">for</span> (i = zsl-&gt;level<span class="number">-1</span>; i &gt;= <span class="number">0</span>; i--) &#123;</span><br><span class="line">        rank[i] = i == (zsl-&gt;level<span class="number">-1</span>) ? <span class="number">0</span> : rank[i+<span class="number">1</span>]; </span><br><span class="line">        <span class="keyword">while</span> (x-&gt;level[i].forward &amp;&amp;</span><br><span class="line">                (x-&gt;level[i].forward-&gt;score &lt; score ||</span><br><span class="line">                    (x-&gt;level[i].forward-&gt;score == score &amp;&amp;</span><br><span class="line">                    sdscmp(x-&gt;level[i].forward-&gt;ele,ele) &lt; <span class="number">0</span>)))</span><br><span class="line">        &#123;</span><br><span class="line">            rank[i] += x-&gt;level[i].span;  <span class="comment">// 第i层的rank</span></span><br><span class="line">            x = x-&gt;level[i].forward;</span><br><span class="line">        &#125;</span><br><span class="line">        update[i] = x; <span class="comment">// 意味着我们的新节点在i层的后继节点是update[i]，并且一定会更新update[i].span</span></span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    level = zslRandomLevel(); <span class="comment">// 随机拿到一个层级</span></span><br><span class="line">    <span class="keyword">if</span> (level &gt; zsl-&gt;level) &#123; <span class="comment">// 如果刚好比已知的层级都高，那么需要更新header节点</span></span><br><span class="line">        <span class="keyword">for</span> (i = zsl-&gt;level; i &lt; level; i++) &#123;</span><br><span class="line">            rank[i] = <span class="number">0</span>;</span><br><span class="line">            update[i] = zsl-&gt;header;</span><br><span class="line">            update[i]-&gt;level[i].span = zsl-&gt;length; <span class="comment">// 注意，这个时候还没有插入新节点，所以这些层的span是所有节点数</span></span><br><span class="line">        &#125;</span><br><span class="line">        zsl-&gt;level = level;</span><br><span class="line">    &#125;</span><br><span class="line">    x = zslCreateNode(level,score,ele); <span class="comment">// 创建一个新节点</span></span><br><span class="line">    <span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; level; i++) &#123;</span><br><span class="line">        x-&gt;level[i].forward = update[i]-&gt;level[i].forward; <span class="comment">// 连接相同层级上的链表</span></span><br><span class="line">        update[i]-&gt;level[i].forward = x; <span class="comment">// 其实就是链表插入操作</span></span><br><span class="line"></span><br><span class="line">        x-&gt;level[i].span = update[i]-&gt;level[i].span - (rank[<span class="number">0</span>] - rank[i]); <span class="comment">// 调整span信息</span></span><br><span class="line">        update[i]-&gt;level[i].span = (rank[<span class="number">0</span>] - rank[i]) + <span class="number">1</span>; <span class="comment">// </span></span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">for</span> (i = level; i &lt; zsl-&gt;level; i++) &#123; <span class="comment">// 加上新节点带来的span</span></span><br><span class="line">        update[i]-&gt;level[i].span++;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// // 设置其他信息</span></span><br><span class="line">    x-&gt;backward = (update[<span class="number">0</span>] == zsl-&gt;header) ? <span class="literal">NULL</span> : update[<span class="number">0</span>]; </span><br><span class="line">    <span class="keyword">if</span> (x-&gt;level[<span class="number">0</span>].forward)</span><br><span class="line">        x-&gt;level[<span class="number">0</span>].forward-&gt;backward = x;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        zsl-&gt;tail = x;</span><br><span class="line">    zsl-&gt;length++;</span><br><span class="line">    <span class="keyword">return</span> x;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/10/08/docker-learn1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/10/08/docker-learn1/" class="post-title-link" itemprop="url">docker学习（1）</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-10-08 00:00:00" itemprop="dateCreated datePublished" datetime="2019-10-08T00:00:00+08:00">2019-10-08</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-10-25 16:01:36" itemprop="dateModified" datetime="2019-10-25T16:01:36+08:00">2019-10-25</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>最近需要把某个服务容器化后搞到K8S上，提高集群利用率，因此学习一下docker和K8S</p>
+<h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><p>执行<code>wget -qO- https://get.docker.com/ | sh</code>，输入密码即可。之后可能会报个权限错<code>Got permission denied while trying to connect to the Docker daemon socket at</code>，执行<code>sudo usermod -aG docker maxiaoxin &amp;&amp; newgrp - docker</code>即可。</p>
+<h2 id="基本概念"><a href="#基本概念" class="headerlink" title="基本概念"></a>基本概念</h2><p>docker的基本架构如下图所示，从这个意义上讲，docker更像个隔离机制而非虚拟机，毕竟虚拟机是可以允许比如在linux上跑一个windows虚拟机的，而docker不能直接做到这一点。</p>
+<p>而且和虚拟机不同的是，严格来说虚拟机是模拟了一个完整的主机，至少是一个完整的操作系统，并且理论上应该可以打一个包含所有运行状态的snapshot（至少包括CPU状态、内存状态和文件状态）。而docker的镜像只包含文件状态，并且非常不建议一个container起多个进程。</p>
+<p><img src="/images/container-what-is-container.png" alt="docker基本架构"></p>
+<ul>
+<li>容器（container）：独立运行的一个或一组应用，以及它们的运行态环境。</li>
+<li>镜像（image）：运行容器的所有基础设施，包括代码、运行库、依赖和其他文件系统的对象（类似snapshot）</li>
+<li>仓库（repository）：类似git或maven中的仓库，支持版本控制</li>
+</ul>
+<h2 id="常用命令"><a href="#常用命令" class="headerlink" title="常用命令"></a>常用命令</h2><ul>
+<li>登录：<code>docker login ${uri}</code></li>
+<li>从仓库pull一个镜像：<code>docker pull ${host}/${image_name}:${version}</code></li>
+<li>上传镜像：<code>docker push ${user_name}/${image_name}</code></li>
+<li>列出本地镜像：<code>docker images</code></li>
+<li>删除镜像：<code>docker rmi ${image_id}</code></li>
+<li>导出镜像文件到本地：<code>docker save -o ${file_name} ${image_name}:${tag}</code></li>
+<li>导入镜像文件：<code>docker load --input ${file_name}</code></li>
+<li>对容器进行快照，生成image：<code>docker commit ${options} ${container_ID} ${image_name}:${tag}</code>，很像git的commit</li>
+<li>使用镜像创建一个容器：<code>docker create ${image_name}:${version}</code></li>
+<li>创建并运行一个容器：<code>docker run ${options} ${image_name}:${version} ${args}</code>，其中<code>-i</code>表示打开容器的标准输入，<code>-t</code>告诉docker为容器建立一个命令行终端，<code>-d</code>表示使容器在后台运行，<code>-c</code>可以调整容器的CPU优先级，<code>--restart=always</code>表示无论容器返回码是什么都立刻重启，<code>--restart=on-failure:5</code>表示当返回码非0时重启，且可选择重启次数</li>
+<li>启动已停止的容器：<code>docker start ${container_ID}</code></li>
+<li>终止/强制停止容器：<code>docker stop ${container_ID}</code>，<code>docker kill ${container_ID}</code></li>
+<li>删除一个已停止的容器：<code>docker rm ${container_ID}</code></li>
+<li>搜索镜像：<code>docker search ${key_word}</code></li>
+<li>查看容器：<code>docker ps ${options}</code>，其中不加任何参数的话是查看运行中的容器，<code>-a</code>查看所有容器（包括已停止的），<code>-l</code>查看最新创建的容器，<code>-n</code>是个数，<code>-q</code>是只列出容器ID</li>
+</ul>
+<p>当然不是所有情况都适合用commit命令，也可以用<code>docker build</code>来创建一个新的镜像，需要先创建一个Dockerfile，比如</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># This is a comment</span></span><br><span class="line">FROM centos:6.8</span><br><span class="line">MAINTAINER MXX</span><br><span class="line">RUN <span class="built_in">echo</span> <span class="string">"hello world"</span></span><br></pre></td></tr></table></figure>
+
+<p>其中<code>FROM</code>一定要写，表示继承自哪个image。如果是空的话可以写为<code>FROM scratch</code>，但一般不太会这么写；<code>MAINTAINER</code>是作者名；<code>RUN</code>代表要执行的命令。</p>
+<p>另外还有些比较常见的命令，比如</p>
+<ul>
+<li><code>ADD/COPY</code>用来复制本地文件到镜像</li>
+<li><code>EXPOSE</code>命令向外部开放端口，但只是个声明</li>
+<li><code>CMD/ENTRYPOINT</code>命令用来描述容器启动后运行的程序等</li>
+<li><code>WORKDIR</code>工作目录，如果没有会创建</li>
+<li><code>USER</code>当前用户，值得一提的是我在用centos的时候，如果不加上<code>USER root</code>的话，某些情况会报权限错</li>
+</ul>
+<p>然后执行<code>docker build . -t ${image_name}:${tag}</code>就可以生成了。</p>
+<p>值得一提的是docker有个概念layer，意指dockerfile的每条指令，或者每个commit都会产生一个“层”（类似git里一个分支上有多个commit）。之所以有这个概念，是因为docker的文件系统采用了UnionFS，以减少修改文件带来的额外存储开销，也就是只存储差分信息。假如差分存储的代价比较大（比如差分的单位是文件，假如某个1GB的文件只修改了1个byte，那么也会额外产生1GB的信息），那么层越多，镜像越大——当然层越多，不同镜像能共享的文件也就越多，这个也需要取舍。</p>
+<p>一般来说启动的还是一个一直运行的服务，而如果依赖比较小的话，可以不用<code>centos</code>这样“重”的基础镜像，参考<a href="https://zhuanlan.zhihu.com/p/54640767" target="_blank" rel="noopener">最小化 Java 镜像的常用技巧</a>。不过比较坑的一点是<code>alpine</code>用的是<code>musl</code>而不是<code>glibc</code>，这将导致某些系统调用不兼容，比如<code>qsort_r</code>。当时我差点改<code>musl</code>源代码了，后来上网找了一个手写的块排加强版代码直接用。</p>
+<h2 id="kubernetes相关"><a href="#kubernetes相关" class="headerlink" title="kubernetes相关"></a>kubernetes相关</h2><p>docker的任务是创建镜像，而如果调度计算资源来运行镜像需要靠kubernetes（k8s）。客户端怎么下载和配置就忽略过了，假设我们已经搞了一个镜像<code>hello/world</code>，公司的registry是<code>foo.bar.net</code>，那么常见的命令包括：</p>
+<ul>
+<li>创建镜像：<code>docker build . -t foo.bar.net/hello/world</code>，注意这里要写全，最好把<code>tag</code>也写上</li>
+<li>登录：<code>docker login foo.bar.net</code></li>
+<li>上传：<code>docker push foo.bar.net/hello/world</code></li>
+<li>创建pod：<code>kubectl create -f helloworld-deployment.yaml</code></li>
+<li>创建service：<code>kubectl create -f helloworld_service.yaml</code></li>
+<li>创建ingress：<code>kubectl create -f helloworld-ingress.yaml</code></li>
+<li>查看状态：<code>kubectl get pod -o wide|grep hello-world</code></li>
+</ul>
+<p>核心在于pod、service、ingress这三个概念，对应的三个配置文件分别是<code>helloworld-deployment.yaml</code>、<code>helloworld_service.yaml</code>、<code>helloworld-ingress.yaml</code>。其中Pod 是一组紧密关联的容器集合，Service 是应用服务的抽象，通过 labels 为应用提供负载均衡和服务发现，而Ingress可以简单的理解成k8s内部的nginx, 和service配合，用作负载均衡器。具体示例可以参考<a href="https://www.mirantis.com/blog/introduction-to-yaml-creating-a-kubernetes-deployment/" target="_blank" rel="noopener">Introduction to YAML: Creating a Kubernetes deployment</a>，总之是一大堆和资源调度相关的配置。</p>
+<p>刚才碰到的一个问题是，上传的文件大于1MB会报错413，那么需要在ingress的配置里加入<code>metadata:annotations:nginx.ingress.kubernetes.io/proxy-body-size: &quot;25m&quot;</code></p>
+<p>有时候也需要rewrite url，需要加上<code>nginx.ingress.kubernetes.io/rewrite-target</code>，具体怎么用参考<a href="https://kubernetes.github.io/ingress-nginx/examples/rewrite/" target="_blank" rel="noopener">Rewrite</a></p>
+<h3 id="配置和挂载"><a href="#配置和挂载" class="headerlink" title="配置和挂载"></a>配置和挂载</h3><p>一般来说还是应该将配置文件和docker镜像分开，在运行的时候从某个地方读，这里我常用的有三种：configMap, secrets和emptyDir。</p>
+<ul>
+<li>emptyDir主要用来在pod重启时不丢失这个路径下的信息，比如某个服务可能挂了，被K8S重新拉起，假如没有一个地方存储日志，就不能确定挂掉的原因了。但如果pod被删掉了，那么emptyDir也会自动删掉。</li>
+<li>configMap主要存放配置信息，一种用法是把所有配置信息的键值对直接写进这个文件，然后通过环境变量传进容器。另一种是通过类似<code>kubectl create configmap ${config_name} --from-file=${dir_path}</code>创建，然后通过volumes的方式挂载到某个路径下，到时候去这里读取。但如果用yaml的方式创建/更新的话，无法引用外部文件，必须写在一个yaml配置文件里。如果是挂载目录的方式的话，至少默认这个目录是只读的。</li>
+<li>secrets和configMap很像，不过主要用来存储敏感信息，比如用户名密码之类的。但一般不会在配置文件里写明文，而是写base64编码后的信息。比如要把一个keytab写进去，那么就可以用<code>cat ${file_name} | base64</code>得到其编码，再写到yaml配置文件里。至于secrets的安全性就不清楚了。类似的，默认挂载后的目录是只读的。</li>
+</ul>
+<p>我试了一下，采用挂载的方式，如果更新configMap和secrets后，pod上对应目录下的文件也会更新。至于环境变量是容器运行的时候写的，当然不能更新了。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/29/redis-read1/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1254,544 +1619,11 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/06/jvm5/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/09/06/jvm5/" class="post-title-link" itemprop="url">JVM学习（5）类加载机制</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-09-06 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-06T00:00:00+08:00">2019-09-06</time>
-            </span>
-          
-            
-
-            
-              <span class="post-meta-item">
-                <span class="post-meta-item-icon">
-                  <i class="fa fa-calendar-check-o"></i>
-                </span>
-                <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-09-09 16:11:25" itemprop="dateModified" datetime="2019-09-09T16:11:25+08:00">2019-09-09</time>
-              </span>
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>有了.class文件后，还需要一系列步骤加载进JVM才能运行。简单来说，一个类从被加载至JVM，到卸载出内存为止，整个生命周期包括加载（loading）、验证（verification）、准备（preparation）、解析（resolution）、初始化（initialization）、使用（using）、卸载（unloading）7个阶段。其中验证、准备、解析三个部分称为连接（linking），顺序如下图所示。</p>
-<p><img src="/images/jvm_class_lifecycle.png" alt="类的生命周期"></p>
-<p>JVM没有规定什么时候开始加载，但规定了5种情况必须对类进行初始化：</p>
-<ol>
-<li>遇到<code>new、getstatic、putstatic、invokestatic</code>这四条指令码。比如new一个对象、读取或设置一个类的静态字段（被final修饰、已在编译期把结果放入常量池的静态字段除外）、调用一个类的静态方法的时候。</li>
-<li>使用<code>java.lang.reflect</code>包的方法对类进行反射调用时</li>
-<li>初始化一个类时，需要先初始化其父类</li>
-<li>虚拟机启动时，用户指定的主类需要先被初始化</li>
-<li>使用JDK1.7的动态语言支持时，如果一个<code>java.lang.invoke.MethodHandle</code>实例最后的解析结果<code>REF_getStatic、REF_putStatic、REF_invokeStatic</code>的方法句柄对应的类需要初始化</li>
-</ol>
-<p>这五种场景中的行为称为对一个类的主动引用，除此之外的引用类的方式都不会触发初始化，称为被动引用，比如</p>
-<ol>
-<li>通过子类引用父类的静态字段，不会触发子类的初始化</li>
-<li>通过数组定义来引用类，不会触发此类的初始化（如<code>SomeClass[] arr= new SomeClass[];</code>）</li>
-<li>引用某个类的静态常量</li>
-</ol>
-<p>其中2虽然不会导致这个类的初始化，但会触发一个<code>[Lorg.fenixsoft.classloading.SomeClass</code>的类初始化，它由JVM自动生成、直接继承自<code>java.lang.Object</code>，由newarray触发，代表了一个元素类型为<code>org.fenixsoft.classloading.SomeClass</code>的一维数组，数组中应有的属性和方法（如<code>length、clone</code>）都实现在这个类。Java中对数组的访问会使用这个类提供的方法（底层使用了<code>xaload、xastore</code>等指令保证不会越界），所以相对<code>C/C++</code>安全。</p>
-<p>此外，接口在初始化时不要求父接口全部完成初始化，只有在真正使用父接口的时候（如引用接口中定义的常量）才会初始化。并且接口也会生成<code>&lt;cinit&gt;</code>的类构造器，用于初始化接口中定义的成员变量。</p>
-<h2 id="加载（loading）"><a href="#加载（loading）" class="headerlink" title="加载（loading）"></a>加载（loading）</h2><p>加载阶段JVM需要做以下事情：</p>
-<ol>
-<li>通过一个类的全限定名来获取定义此类的二进制字节流</li>
-<li>将这个字节流所代表的静态存储结构转换为方法区的运行时数据结构</li>
-<li>在内存中生成一个代表这个类的java.lang.Class对象，作为方法区这个类的各种数据的访问入口</li>
-</ol>
-<p>常见的获取二进制字节流的方式有：</p>
-<ol>
-<li>从.class文件直接获得</li>
-<li>从zip包中获得，比如JAR,EAR,WAR</li>
-<li>从网络中获得，比如Applet</li>
-<li>运行时计算生成，比如动态代理，java.lang.reflect.Proxy就是用了ProxyGenerator.generateProxyClass来为特定接口生成形式为”$Proxy”的代理类的二进制字节流</li>
-<li>由其他文件生成，比如JSP</li>
-<li>从数据库中读取<br>…</li>
-</ol>
-<p>除了获得字节流的方式外，开发人员还可以自定义个一个ClassLoader去控制如何读取字节流。</p>
-<p>数组类比较特殊，它是由JVM直接创建的，一个数组类（简称为C）的创建过程需要遵循以下规则：</p>
-<ol>
-<li>如果数组的组件类型（Component Type，指数组去掉一个维度后的类型）是引用类型，则递归的加载这个组件类型，之后数组C将在这个组件类型所属的ClassLoader的类命名空间上被标志</li>
-<li>如果组件类型不是引用类型，则会标识与Bootstrap Classloader关联。</li>
-<li>数组类的可见性与它的组件的可见性保持一致，如果组件类型不是引用类型，则默认为public</li>
-</ol>
-<p>加载完成后，JVM外部的二进制字节流就按虚拟机所需的格式存储在方法区之中，方法区中的数据格式由JVM自行定义。然后在内存中实例化一个java.lang.Class对象（HotSpot将这个对象放在了方法区），这个对象将作为程序访问方法区中这些类型数据的外部接口。</p>
-<h2 id="验证（verification）"><a href="#验证（verification）" class="headerlink" title="验证（verification）"></a>验证（verification）</h2><p>简单来说就是确保这些二进制字节流格式符合JVM规范，且不会对JVM有危害。</p>
-<h3 id="文件格式验证"><a href="#文件格式验证" class="headerlink" title="文件格式验证"></a>文件格式验证</h3><p>检验其是否符合Class文件规范，且能被当前JVM兼容，包括</p>
-<ol>
-<li>以<code>0xcafebabe</code>开头</li>
-<li>主、次版本号能否被JVM兼容</li>
-<li>常量池中的常量是否有不被支持的类型（检查常量tag标志）</li>
-<li>指向常量的各种索引值中是否有指向不存在或不符合类型的常量</li>
-<li><code>CONSTANT_Utf8_info</code>类型的常量中是否有不符合UTF8编码的数据</li>
-<li>Class文件中各个部分及文件本身是否有被删除或附加的其他信息<br>…</li>
-</ol>
-<p>只有经过文件格式验证后的字节流才会保存到方法区，后面三个验证阶段全部基于方法区的数据，不会直接操作字节流</p>
-<h3 id="元数据验证"><a href="#元数据验证" class="headerlink" title="元数据验证"></a>元数据验证</h3><p>确保Class数据描述的语义符合java语言规范要求，包括</p>
-<ol>
-<li>这个类是否有父类（除了<code>java.lang.Object</code>都应该有父类）</li>
-<li>这个类是否继承了一个<code>final</code>类</li>
-<li>如果这个类不是<code>abstract</code>，那么是否实现了所有父类/接口中要求实现的方法</li>
-<li>类中的字段、方法是否与父类矛盾（如覆盖了父类的<code>final</code>字段、不符合规则的方法重载）<br>…</li>
-</ol>
-<h3 id="字节码验证"><a href="#字节码验证" class="headerlink" title="字节码验证"></a>字节码验证</h3><p>验证操作码，包括</p>
-<ol>
-<li>确保任意时刻操作数栈的数据类型和指令代码序列都能配合工作，例如不会出现按<code>long</code>去读一个<code>int</code></li>
-<li>确保跳转指令不会跳转到方法体以外的字节码上</li>
-<li>确保方法体中的类型转换是有效的<br>…</li>
-</ol>
-<p>JDK1.6后为<code>Code</code>属性的属性表引入了一个<code>StackMapTable</code>属性，描述了方法体中所有基本块开始时本地变量表和操作栈应有的状态，那么验证期间只要检查<code>StackMapTable</code>属性即可，不需要重新推导这部分信息。JDK1.7后要求主版本号超过50的只能用这种形式。</p>
-<p>（其实很奇怪，既然要验证就说明不信任代码提供方，那怎么能把一部分验证工作放在代码提供方呢？只能说JVM设计者认为代码提供方都是善意的，但工作做的比较糙，编译出来的东西不靠谱）</p>
-<h3 id="符号引用验证"><a href="#符号引用验证" class="headerlink" title="符号引用验证"></a>符号引用验证</h3><p>符号引用验证发生在解析之后，目的是检查对类自身以外（常量池中的各种符号引用）的信息进行匹配性校验，包括</p>
-<ol>
-<li>符号引用中的全限定名能否找到对应的类</li>
-<li>指定类中有无描述的方法和字段</li>
-<li>符号引用中的类、字段、方法的访问性（<code>private、protected、public、default</code>）是否可以被当前类访问<br>…</li>
-</ol>
-<p>验证过程可以用<code>-XVerify:none</code>来取消</p>
-<h2 id="准备（preparation）"><a href="#准备（preparation）" class="headerlink" title="准备（preparation）"></a>准备（preparation）</h2><p>准备阶段主要用来为类变量（被static修饰）分配内存（一般在方法区）并设置初始值，且初始值为0。比如<code>public static int value = 123;</code>这个变量在准备阶段过后的初始值为0，而在初始化后才被赋值为123。</p>
-<p>如果类字段的属性表包含<code>ConstantValue</code>属性，那么准备阶段就会把变量定义为所指定的值。</p>
-<h2 id="解析（resolution）"><a href="#解析（resolution）" class="headerlink" title="解析（resolution）"></a>解析（resolution）</h2><p>解析的目的是为了将常量池中的符号引用替换为直接引用的过程，</p>
-<ul>
-<li>符号引用（Symbolic References）：以一组符号来描述所引用的目标，符合可以是任何形式的字面量，只要在使用时能无歧义的定位到目标即可<ul>
-<li>符号引用与JVM实现的内存布局无关</li>
-<li>引用的目标不一定已被加载到内存</li>
-<li>各种JVM的内存布局可以各不相同，但能接受的符号引用必须都是一致的</li>
-</ul>
-</li>
-<li>直接引用（Direct References）：可以是直接指向目标的指针、相对偏移量或句柄<ul>
-<li>与JVM内部实现相关</li>
-<li>不同JVM的直接引用形式一般不同</li>
-<li>如果有直接引用，那么引用目标一定在内存</li>
-</ul>
-</li>
-</ul>
-<p>JVM规范没有规定解析阶段发生的具体时间，只要求在执行<code>anewarray, checkcast, getfield, getstatic, instanceof, invokedynamic, invokeinterface, invokespecial, invokestatic, invokevirtual, ldc, ldc_w, multianewarray, new, putfield, putstatic</code>这16个用于操作符号引用的字节码指令前，先对符号引用进行解析。所以JVM可以选择在加载的时候就解析还是在使用的时候才解析。JVM要求除<code>invokedynamic</code>外，在同一个实体中，如果一个符号引用被成功解析，那么之后也要能够成功解析；如果第一次解析失败，那么之后也应该收到同样的异常。而<code>invokedynamic</code>必须要等到实际执行时再解析，这条指令在JDK1.7中被引入，JDK1.8开始用来实现lambda表达式。</p>
-<p>解析主要针对类或接口（CONSTANT_Class_info）、字段（CONSTANT_Fieldref_info）、类方法（CONSTANT_Methodref_info）、接口方法（CONSTANT_InterfaceMethodref_info）、方法类型（CONSTANT_MethodType_info）、方法句柄（CONSTANT_MethodHandle_info）、调用点（CONSTANT_Dynamic_info）这7类符号引用进行，后三种和动态调用相关，这里只解释前4种：</p>
-<h3 id="类或接口"><a href="#类或接口" class="headerlink" title="类或接口"></a>类或接口</h3><p>假设当前代码所处的类为D，需要解析一个类或接口C的符号引用N，需要</p>
-<ol>
-<li>如果C不是一个数组类型，那么JVM会把N传给D的ClassLoader去加载C。</li>
-<li>如果C是数组类型，且数组的组建类型是对象，那么会加载其组建类型，然后由JVM生成一个代表此数组维度和元素的数组对象。</li>
-<li>在进行了1或2后，C已经在JVM中称为一个有效的类或接口了，然后验证D是否有对C的访问权限，没有则抛出异常</li>
-</ol>
-<h3 id="字段"><a href="#字段" class="headerlink" title="字段"></a>字段</h3><p>解析字段的符号引用，首先要解析字段表里class_index项索引的<code>CONSTANT_Class_info</code>符号引用，解析成功后，假设这个类/接口是C，</p>
-<ol>
-<li>如果C本身就包含了包含简单名称和字段描述符都与目标项匹配的字段，则返回这个字段的直接引用</li>
-<li>如果C中实现了接口，那么按照继承关系从下往上递归搜索各个接口和它的父接口，如果找到则返回</li>
-<li>如果C不是<code>java.lang.Object</code>，那么会从下向上递归搜索其父类，如果找到则返回</li>
-<li>都没找到则表示查找失败，返回<code>java.lang.NoSuchFieldError</code></li>
-</ol>
-<p>如果查找过程中返回了引用，但没有访问权限，也会抛出异常</p>
-<p>如果一个同名字段同时出现在父类和子类，那么编译器可能会拒绝编译</p>
-<h3 id="类方法"><a href="#类方法" class="headerlink" title="类方法"></a>类方法</h3><p>与字段解析类似，需要先解析所属的类/接口C，然后</p>
-<ol>
-<li>如果C是个接口，则报错<code>java.lang.IncompatibleClassChangeError</code></li>
-<li>从下往上递归查找C和C的父类，如果找到相匹配的方法则返回</li>
-<li>递归查找C的接口，如果找到相匹配的方法，说明C是个抽象类，抛出<code>java.lang.AbstractMethodError</code></li>
-<li>查找失败，报错<code>java.lang.NoSuchMethodError</code></li>
-</ol>
-<p>最后会验证其访问权限</p>
-<h3 id="接口方法"><a href="#接口方法" class="headerlink" title="接口方法"></a>接口方法</h3><p>与类方法解析类似，但需要保证C是个接口</p>
-<ol>
-<li>如果C不是接口，则报错<code>java.lang.IncompatibleClassChangeError</code></li>
-<li>递归查找C和C的父接口，直到<code>java.lang.Object</code>，如果找到则返回</li>
-<li>没找到报错<code>java.lang.NoSuchMethodError</code></li>
-</ol>
-<p>理论上接口方法都是<code>public</code>，所以应当不出现<code>java.lang.IllegalAccessError</code></p>
-<h2 id="初始化（initialization）"><a href="#初始化（initialization）" class="headerlink" title="初始化（initialization）"></a>初始化（initialization）</h2><p>直到初始化阶段才开始执行自定义的java代码， 也就是<code>&lt;cinit&gt;()</code>方法</p>
-<ol>
-<li><code>&lt;cinit&gt;()</code>由所有类变量的赋值动作和静态语句块<code>static{}</code>中的语句合并而成，顺序由源文件顺序而定，且<code>static{}</code>只能访问到定义在之前的变量</li>
-<li><code>&lt;cinit&gt;()</code>不需要显式的调用父类的<code>&lt;cinit&gt;()</code>，JVM会保证父类的肯定先执行完毕</li>
-<li>如果没有相关代码，可以不生成<code>&lt;cinit&gt;()</code>语句</li>
-<li>接口不能使用静态语句块，但也有变量初始化操作，故也会生成<code>&lt;cinit&gt;()</code>，但执行<code>&lt;cinit&gt;()</code>时不需要先执行父类的<code>&lt;cinit&gt;()</code>。同样的，接口的实现类初始化时也不会执行接口的<code>&lt;cinit&gt;()</code></li>
-<li>JVM会保证<code>&lt;cinit&gt;()</code>能被正确加锁，这也意味着可能多个线程卡在某个类的<code>&lt;cinit&gt;()</code>上</li>
-</ol>
-<h2 id="类加载器（ClassLoader）"><a href="#类加载器（ClassLoader）" class="headerlink" title="类加载器（ClassLoader）"></a>类加载器（ClassLoader）</h2><p>从JVM的角度讲，只有两类加载器：一类是使用C++实现的启动类加载器<code>Bootstrap ClassLoader</code>，是JVM的一部分；另一种是其他的类加载器，由JAVA语言实现，独立于JVM，且全继承了<code>java.lang.ClassLoader</code>。</p>
-<p>有三个系统提供的类加载器比较常见：</p>
-<ol>
-<li>启动类加载器（<code>Bootstrap ClassLoader</code>）：负责将<code>$JAVA_HOME/lib</code>中或<code>-Xbootclasspath</code>路径下，能被JVM识别的类库加载到JVM内存中，无法被java程序直接引用。用户自定义<code>ClassLoader</code>时需要需要<code>Bootstrap ClassLoader</code>加载，可以直接用<code>null</code>代替。</li>
-<li>扩展类加载器（<code>Extension ClassLoader</code>）：由<code>sun.misc.Launcher$ExtClassLoader</code>实现，负责加载<code>$JAVA_HOME/lib/ext</code>或<code>java.ext.dirs</code>系统变量所指定的路径下的所有类库，开发者也可以直接使用这个类加载器</li>
-<li>应用程序加载器（<code>Application ClassLoader</code>）：由<code>sun.misc.Launcher$AppClassLoader</code>实现，负责加载用户类路径<code>ClassPath</code>上所指定的类库，也是<code>getSystemClassLoader()</code>方法的返回值，故一般也称为系统类加载器，开发者可以直接使用，默认的类加载器</li>
-</ol>
-<p>每一个类加载器都拥有一个独立的类名称空间，也就是说判断两个Class是否相等（包括<code>Class.equals(), isAssignableFrom(), isInstance()</code>的返回值）要判断两个<code>ClassLoader</code>是否相等。</p>
-<p>开发人员也可以自定义类加载器，一般来说类加载器都应当有自己的父类加载器，且使用双亲委派模型（<code>Parents Delegation Model</code>）来复用父加载器代码：尽可能尝试让父类加载器去加载这个类。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/02/jvm4/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/09/02/jvm4/" class="post-title-link" itemprop="url">JVM学习（4）类文件结构</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-09-02 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-02T00:00:00+08:00">2019-09-02</time>
-            </span>
-          
-            
-
-            
-              <span class="post-meta-item">
-                <span class="post-meta-item-icon">
-                  <i class="fa fa-calendar-check-o"></i>
-                </span>
-                <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-09-05 18:24:17" itemprop="dateModified" datetime="2019-09-05T18:24:17+08:00">2019-09-05</time>
-              </span>
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>为了实现“Write Once, Run Anywhere”，JVM支持运行.class格式的字节码文件，这样可以保证JVM的平台无关性和语言无关性：即不管什么语言，只要能编译为符合规范的.class文件，就可以在JVM上运行。</p>
-<h2 id="class类文件结构"><a href="#class类文件结构" class="headerlink" title="class类文件结构"></a>class类文件结构</h2><p>任何一个class文件都对应着唯一一个类或接口的定义信息。当然一来JVM可以动态生成class，不一定每个类都对应着一个.class文件；二来一个java源代码里可以定义多个类，每个类（包括子类）实际上都会生成一个.class文件。</p>
-<p>一个典型的class文件分为：MagicNumber，Version，Constant_pool，Access_flag，This_class，Super_class，Interfaces，Fields，Methods 和Attributes这十个部分：</p>
-<table>
-<thead>
-<tr>
-<th>类型</th>
-<th align="center">名称</th>
-<th align="center">数量</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>u4</td>
-<td align="center">magic</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">minor_version</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">major</td>
-<td align="center">_version</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">constant_pool_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>cp_info</td>
-<td align="center">constant_pool</td>
-<td align="center">constant_pool_count-1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">access_flags</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">this_class</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">super_class</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">interfaces_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">interfaces</td>
-<td align="center">interfaces_count</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">fields_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>field_info</td>
-<td align="center">fields</td>
-<td align="center">fields_count</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">methods_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>method_info</td>
-<td align="center">methods</td>
-<td align="center">methods_count</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">attributes_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>attribute_info</td>
-<td align="center">attributes</td>
-<td align="center">attributes_count</td>
-</tr>
-</tbody></table>
-<p>其中u1, u2, u4,u8分别表示1、2、4、8字节长度的标量，且以big-endian的方式保存。</p>
-<p>不定长的区域，比如constant_pool，method_info等，基本都是count+info[count]这种形式。</p>
-<p>先写一个示例代码：</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> java.io.Serializable;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Serializable</span> </span>&#123;</span><br><span class="line">  <span class="keyword">protected</span> <span class="keyword">int</span> hello1;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello1</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello1;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">Child</span> <span class="keyword">extends</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Comparable</span>&lt;<span class="title">Child</span>&gt;</span>&#123;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="keyword">long</span> serialVersionUID = -<span class="number">3911120229867216339L</span>;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">transient</span> <span class="keyword">int</span> hello2;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">setHello2</span><span class="params">(<span class="keyword">int</span> hello2)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">this</span>.hello2 = hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello2</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">compareTo</span><span class="params">(Child o)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">this</span>.hello2 - o.hello2;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>注意这段代码编译后生成两个class文件，这里只分析<a href="/files/Child.class">Child.class</a>。可以先用<code>javap -v -p -s -sysinfo -constants Child</code>看一下基本框架。然后依次分析每个区域。</p>
-<h2 id="Magic-Numbers和版本号"><a href="#Magic-Numbers和版本号" class="headerlink" title="Magic Numbers和版本号"></a>Magic Numbers和版本号</h2><p>魔数，.class文件必须以0xcafebabe开头，这个跟.jpeg之类的文件类似。</p>
-<p>接下来4个字节是版本号，其中后两个字节是主版本号，这里是0x0031，对应JDK1.5.0_11版本。一般高版本的JVM兼容低版本的.class文件，但反过来不行。</p>
-<h2 id="常量池"><a href="#常量池" class="headerlink" title="常量池"></a>常量池</h2><p>接下来是常量池（constant pool）部分，2字节的数字表示一共有多少个常量，接下来一共有constant_pool_count-1个实际常量。这里一共有0x002a-1=42-1=41个常量。且常量池索引以1开始，0被用来表示“不引用任何一个常量池项目”。</p>
-<p>常量池主要包含两部分：字面量（literal）和符号引用（symbolic references）。字面量比如文本字符串、声明为final的常量值等。符号引用包含三部分：</p>
-<ul>
-<li>类和接口的全限定名（full qualified name）</li>
-<li>字段的名称和描述符（descriptor）</li>
-<li>方法的名称和描述符</li>
-</ul>
-<p>每个常量以1字节的类型描述开始，然后按这个类型定义的表去填充数据，具体参考<a href="https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html" target="_blank" rel="noopener">The class File Format</a>。以刚才编译好的.class文件为例，跳过重复的类型，大概有以下几个部分：</p>
-<ul>
-<li>第1个常量是<code>0a 0006 0023</code>，对应CONSTANT_Methodref_info，两个index分别指向第6和第35个常量，表明这个方法在第6个常量表示的类（Base），具体的名称和描述符参考第35个常量（<code>&quot;&lt;init&gt;&quot;:()V</code>）</li>
-<li>第2个常量是<code>09 0004 0024</code>，对应CONSTANT_Fieldref_info，与CONSTANT_Methodref_info类似，表明这个字段在第4个常量表示的类（Child），具体的名称和描述符参考第36个常量（<code>hello2:I</code>）</li>
-<li>第4个常量是<code>07 0026</code>，对应CONSTANT_Class_info，这个类的名称指向第38个常量，这个常量是个字符串，值为<code>Child</code></li>
-<li>第8个常量是<code>01 0010 73657269616c56657273696f6e554944</code>，对应CONSTANT_Utf8_info，是一个utf8字符串，此字符串长为16（32字节），用python3的<code>bytes.fromhex(&quot;73657269616c56657273696f6e554944&quot;)</code>解码得到字符串是<code>serialVersionUID</code></li>
-<li>第11个常量是<code>05 c9b8e8df78eba22d</code>，对应CONSTANT_Long_info，是一个long型常量，对应十进制数字为<code>-3911120229867216339</code></li>
-<li>第35个常量是<code>0c 000f 0010</code>，对应CONSTANT_NameAndType_info，表示它的名字为第15个常量（<code>&lt;init&gt;</code>），类型为第16个常量<code>()V</code></li>
-</ul>
-<p>总的来说常量池还是以字符串、数字为主。</p>
-<h2 id="访问标志"><a href="#访问标志" class="headerlink" title="访问标志"></a>访问标志</h2><p>常量池结束后是两个字节的访问标志，用以声明这个类/接口/注解…的访问类型。这个类是0x0021，为<code>ACC_PUBLIC|ACC_SUPER</code>，ACC_PUBLIC容易理解，即这个类声明为public的；而ACC_SUPER主要是为了向下兼容，因为invokespecial这个指令的语义在JDK1.0.2发生过变化（可以参考<a href="https://blog.csdn.net/xinaij/article/details/38872851" target="_blank" rel="noopener">ACC_SUPER和早期的invokespecial</a>），那么新版JDK编译出来的类都需要带上这个flag。</p>
-<h2 id="类索引、父类索引和接口索引集合"><a href="#类索引、父类索引和接口索引集合" class="headerlink" title="类索引、父类索引和接口索引集合"></a>类索引、父类索引和接口索引集合</h2><p>还是指向常量池的信息，这里类是第4个常量（Child类），父类是第6个常量（Base类）。由于所有java class都至少有个一个基类Object，故父类索引一定不为0。</p>
-<p>这个类的接口集合大小为1，之后是一系列2字节的常量索引（长度为1），可以看到Child类继承了7号常量描述的接口（java/lang/Comparable）。</p>
-<h2 id="字段表集合"><a href="#字段表集合" class="headerlink" title="字段表集合"></a>字段表集合</h2><p>相比于接口，字段包含的信息比较多，除了名字和类型外，还包含诸如是否被static、final、public、volatile等修饰符修饰等信息。因此一个字段被定义为</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">field_info &#123;</span><br><span class="line">  u2 access_flags;</span><br><span class="line">  u2 name_index;</span><br><span class="line">  u2 descriptor_index;</span><br><span class="line">  u2 attributes_count;</span><br><span class="line">  attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>这里一共有2个字段，第一个字段为<code>001A 0008 0009 0001 000A 00000002 000B</code>，被声明为<code>0x1A=ACC_PRIVATE|ACC_STATIC|ACC_FINAL</code>，名称为第8个常量（字符串<code>serialVersionUID</code>），描述符为第9个常量（字符串<code>J</code>，表示基本类型long）。</p>
-<p>所谓描述符(descriptor)是描述字段的数据类型、方法的参数列表（包括数量、类型、顺序）和返回值。基本类型和void都用一个大写字母表示，而对象用L+对象的全限定名来表示，比如<code>Ljava/lang/Object;</code>（一般全限定名后加个分号以示区分）。数组则是加个<code>[</code>，比如<code>[[Ljava/lang/String;</code>表示<code>String[][]</code>这样的二位数组，<code>[I</code>表示<code>int[]</code>这样的int数组。描述方法时，先写参数列表，后写返回值。例如方法<code>int indexOf(char[] source, int sourceOffset, char[] target, int targetOffset, int targetCount, int from Index)</code>的描述符为<code>([CII[CIII]])I</code>。</p>
-<p>最后，这个字段包含1个属性（attribute），属性用来保存一些额外信息，每个attribute_info被定义为</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">attribute_info &#123;</span><br><span class="line">     u2 attribute_name_index;</span><br><span class="line">     u4 attribute_length;</span><br><span class="line">     u1 info[attribute_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>可以看到这个字段有一个attribute_info，name为第10个常量<code>ConstantValue</code>，其内容长为2字节，但需要联合起来表示指向第11个常量(一个long型的数字-3911120229867216339l)。</p>
-<p>第二个字段为<code>0082 000D 000E 0000</code>，被声明为<code>0x82=ACC_PRIVATE|ACC_TRANSIENT</code>，名称为第13个常量<code>hello2</code>，描述符为第14个常量<code>I</code>，没有额外属性。</p>
-<h2 id="方法表集合"><a href="#方法表集合" class="headerlink" title="方法表集合"></a>方法表集合</h2><p>方法表和字段表结构很类似，不过由于字段和方法的访问标志不太一样，所以实际含义不太一样。此外方法表一般会有一个属性指向Code类型，需要参考属性集合表。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">method_info &#123;</span><br><span class="line">     u2 access_flags;</span><br><span class="line">     u2 name_index;</span><br><span class="line">     u2 descriptor_index;</span><br><span class="line">     u2 attributes_count;</span><br><span class="line">     attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>Child里有6个方法，如下表所示，其中bridge表示这个方法是桥接方法，synthetic表示这个方法由编译器生成。</p>
-<table>
-<thead>
-<tr>
-<th>二进制码</th>
-<th>方法</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>0001 000f 0010 0001 0011 0000002f...</code></td>
-<td><code>public &lt;init&gt; ()V</code></td>
-</tr>
-<tr>
-<td><code>0001 0016 0017 0001 0011 0000003e...</code></td>
-<td><code>public setHello2 (I)V</code></td>
-</tr>
-<tr>
-<td><code>0001 0018 0019 0001 0011 0000002f...</code></td>
-<td><code>public getHello2 ()I</code></td>
-</tr>
-<tr>
-<td><code>0001 001a 001b 0001 0011 0000003e...</code></td>
-<td><code>public compareTo (LChild;)I</code></td>
-</tr>
-<tr>
-<td><code>1041 001d 0019 0001 0011 0000002f...</code></td>
-<td><code>public bridge synthetic getHello1 ()I</code></td>
-</tr>
-<tr>
-<td><code>1041 001a 001e 0001 0011 00000033...</code></td>
-<td><code>public bridge synthetic compareTo (Ljava/lang/Object;)I</code></td>
-</tr>
-</tbody></table>
-<p>JSL对<a href="https://docs.oracle.com/javase/tutorial/java/generics/bridgeMethods.html" target="_blank" rel="noopener">bridge method</a>的定义为：</p>
-<blockquote>
-<p>When compiling a class or interface that extends a parameterized class or implements a parameterized interface, the compiler may need to create a synthetic method, called a bridge method, as part of the type erasure process. You normally don’t need to worry about bridge methods, but you might be puzzled if one appears in a stack trace.</p>
-</blockquote>
-<p>比较奇怪的是<code>getHello1</code>也生成了一个桥接方法，我在网上查到的说法是只有类型擦除的时候才会生成bridge method，但实际上我试下来只要Child继承了Base，无论是否继承了Comparable，都会生成一个bridge的<code>getHello1()</code>。看了下反编译后的字节码，似乎bridge方法都会invokespecial/invokevirtual另一个方法，也就是说会把具体实现代理到其他方法去。</p>
-<h2 id="属性表集合"><a href="#属性表集合" class="headerlink" title="属性表集合"></a>属性表集合</h2><p>可以看出，每个方法都有一个Code类型的属性，实际上的字节码也保存在这个属性里。之前也提到过一个ConstantValue属性。JVM对属性的规定比较宽泛，也允许编译器向属性表写入自己定义的属性信息。这里只记录一些常见的属性。</p>
-<h3 id="Code属性"><a href="#Code属性" class="headerlink" title="Code属性"></a>Code属性</h3><p>完整的Code_attribute定义如下，</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">Code_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 max_stack;</span><br><span class="line">    u2 max_locals;</span><br><span class="line">    u4 code_length;</span><br><span class="line">    u1 code[code_length];</span><br><span class="line">    u2 exception_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 end_pc;</span><br><span class="line">        u2 handler_pc;</span><br><span class="line">        u2 catch_type;</span><br><span class="line">    &#125; exception_table[exception_table_length];</span><br><span class="line">    u2 attributes_count;</span><br><span class="line">    attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>以上一节中的<code>compareTo (LChild;)I</code>方法为例，其完整二进制代码如下：</p>
-<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">0011 0000003e 0002 0002 0000000a </span><br><span class="line">2a b4 00 02 2b b4 00 02 64 ac </span><br><span class="line">0000 </span><br><span class="line">0002</span><br><span class="line">0012 00000006 0001 0000 0019 </span><br><span class="line">0013 00000016 0002 0000 000a 0014 0015 0000 0000 000a 001c 0015 0001</span><br></pre></td></tr></table></figure>
-
-<p>可以看出，这个方法允许的最大操作数栈的最大深度为2，允许最多2个局部变量（包括形参）：max_locals参数的单位是slot，对于小于双字节的类型（如byte,char…）需要1个slot，而对double和long则需要2个slot。方法参数包括this，所以这个方法实际上参数是2。代码长度为10（<code>2a b4 00 02 2b b4 00 02 64 ac</code>），分别表示：</p>
-<table>
-<thead>
-<tr>
-<th>字节码</th>
-<th>指令</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>2a</td>
-<td><code>aload_0</code></td>
-<td>将第一个引用类型本地变量推送至栈顶</td>
-</tr>
-<tr>
-<td>b4 0002</td>
-<td><code>getfield</code></td>
-<td>获取指定类的实例域, 并将其压入栈顶。这里操作数为0x0002，查询常量池可知要把Child.hello2压栈</td>
-</tr>
-<tr>
-<td>2b</td>
-<td><code>aload_1</code></td>
-<td>将第二个引用类型本地变量推送至栈顶</td>
-</tr>
-<tr>
-<td>b4 0002</td>
-<td><code>getfield</code></td>
-<td>获取指定类的实例域, 并将其压入栈顶</td>
-</tr>
-<tr>
-<td>64</td>
-<td><code>isub</code></td>
-<td>将栈顶两int型数值相减并将结果压入栈顶</td>
-</tr>
-<tr>
-<td>ac</td>
-<td><code>ireturn</code></td>
-<td>从当前方法返回int</td>
-</tr>
-</tbody></table>
-<p>之后exception_table为空，有两个额外属性，分别是<code>LineNumberTable</code>和<code>LocalVariableTable</code>。</p>
-<h3 id="LineNumberTable属性"><a href="#LineNumberTable属性" class="headerlink" title="LineNumberTable属性"></a>LineNumberTable属性</h3><p>用于描述java源代码行号和字节码行号之间的对应关系，定义如下</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">LineNumberTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 line_number_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 line_number;	</span><br><span class="line">    &#125; line_number_table[line_number_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>所以这段代码偏移量为0的代码对应源代码的第25行，且只有一行代码。</p>
-<h3 id="LocalVariableTable属性"><a href="#LocalVariableTable属性" class="headerlink" title="LocalVariableTable属性"></a>LocalVariableTable属性</h3><p>非必须属性，用来记录每个变量的名字，方便别人调用。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">LocalVariableTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 local_variable_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 length;</span><br><span class="line">        u2 name_index;</span><br><span class="line">        u2 descriptor_index;</span><br><span class="line">        u2 index;</span><br><span class="line">    &#125; local_variable_table[local_variable_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>这段代码一共记录了两个变量名，分别是<code>this</code>和<code>o</code>，对应两个形参名。</p>
-<p>此外Child类中还有SourceFile、Signature属性，这里就不多说了。</p>
-<p>Child类基本就分析到这了，实际上少分析了几个比较重要的分析，比如执行过程中的异常处理流程、异常抛出列表等、引导方法（BootstrapMethods）、各种字节码指令（特别是异常指令和同步指令）等，之后再补充。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
   <nav class="pagination">
-    <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="extend next" rel="next" href="/page/2/"><i class="fa fa-angle-right" aria-label="Next page"></i></a>
+    <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="page-number" href="/page/3/">3</a><a class="extend next" rel="next" href="/page/2/"><i class="fa fa-angle-right" aria-label="Next page"></i></a>
   </nav>
 
 
@@ -1836,7 +1668,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">20</span>
+          <span class="site-state-item-count">22</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1897,7 +1729,11 @@
         
           
         
-        <span class="site-state-item-count">25</span>
+          
+        
+          
+        
+        <span class="site-state-item-count">27</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
