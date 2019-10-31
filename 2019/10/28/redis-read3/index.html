@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="之前提到，redis并没有把底层的数据结构暴露给用户，而是对用户提供string、list、set、zset、hash五种类型的object，底层采用之前提到的数据结构，它对用户理论上是透明的。这种分离机制的一个好处是可以根据具体场景进行优化，比如如果hash表非常小的时候，直接用ziplist保存键值对可能会比hashtable计算并查存会更高效，所用空间也更小。 对象的类型与编码redis使用">
+<meta name="keywords" content="redis">
+<meta property="og:type" content="article">
+<meta property="og:title" content="redis学习（3）对象">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/10/28/redis-read3/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="之前提到，redis并没有把底层的数据结构暴露给用户，而是对用户提供string、list、set、zset、hash五种类型的object，底层采用之前提到的数据结构，它对用户理论上是透明的。这种分离机制的一个好处是可以根据具体场景进行优化，比如如果hash表非常小的时候，直接用ziplist保存键值对可能会比hashtable计算并查存会更高效，所用空间也更小。 对象的类型与编码redis使用">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-10-31T14:30:01.175Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="redis学习（3）对象">
+<meta name="twitter:description" content="之前提到，redis并没有把底层的数据结构暴露给用户，而是对用户提供string、list、set、zset、hash五种类型的object，底层采用之前提到的数据结构，它对用户理论上是透明的。这种分离机制的一个好处是可以根据具体场景进行优化，比如如果hash表非常小的时候，直接用ziplist保存键值对可能会比hashtable计算并查存会更高效，所用空间也更小。 对象的类型与编码redis使用">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/10/28/redis-read3/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>redis学习（3）对象 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/10/28/redis-read3/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">redis学习（3）对象
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-10-28 00:00:00" itemprop="dateCreated datePublished" datetime="2019-10-28T00:00:00+08:00">2019-10-28</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-10-31 22:30:01" itemprop="dateModified" datetime="2019-10-31T22:30:01+08:00">2019-10-31</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>之前提到，redis并没有把底层的数据结构暴露给用户，而是对用户提供string、list、set、zset、hash五种类型的object，底层采用之前提到的数据结构，它对用户理论上是透明的。这种分离机制的一个好处是可以根据具体场景进行优化，比如如果hash表非常小的时候，直接用ziplist保存键值对可能会比hashtable计算并查存会更高效，所用空间也更小。</p>
+<h2 id="对象的类型与编码"><a href="#对象的类型与编码" class="headerlink" title="对象的类型与编码"></a>对象的类型与编码</h2><p>redis使用对象来表示数据库中的键和值，每创建一个键值对时，redis会至少创建一个键对象和值对象，对象的基本定义如下，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">redisObject</span> &#123;</span></span><br><span class="line">    <span class="keyword">unsigned</span> type:<span class="number">4</span>; <span class="comment">// 对外暴露的类型，包括string、list、set、zset、hash</span></span><br><span class="line">    <span class="keyword">unsigned</span> encoding:<span class="number">4</span>; <span class="comment">// 具体编码，目前有11种</span></span><br><span class="line">    <span class="keyword">unsigned</span> lru:LRU_BITS; <span class="comment">// LRU时间</span></span><br><span class="line">    <span class="keyword">int</span> refcount; <span class="comment">// 引用计数</span></span><br><span class="line">    <span class="keyword">void</span> *ptr; <span class="comment">// 具体数据</span></span><br><span class="line">&#125; robj; <span class="comment">// 总长度为16字节</span></span><br></pre></td></tr></table></figure>
+
+<h3 id="string类型的编码转换"><a href="#string类型的编码转换" class="headerlink" title="string类型的编码转换"></a>string类型的编码转换</h3><p>redis用<code>int</code>、<code>embstr</code>或<code>raw</code>来实现string类型，<code>int</code>用来保存整数，且直接保存在<code>ptr</code>字段。<code>raw</code>即<code>sds</code>，而<code>embstr</code>稍微有点特殊。它主要用来存放短字符串，确切的说是字节数小于等于44的字符串（原来是39）。这是因为redis采用jemalloc内存分配器，这个分配器会分配8，16，32，64等字节的内存，因此一次申请64字节依次存放robj和sds，而由于robj占16字节，sdshdr8占3字节，<code>&#39;\0&#39;</code>占1字节，所以能最多能保存64-16-3-1=44字节（旧版的sds头占的空间更大一点，只留了39字节给实际数据）。以下是</p>
+<p>redis保存浮点数时会先将其保存为字符串而非float/double，估计是因为精度；对浮点数的操作（比如<code>INCRBYFLOAT</code>）也是先转换为浮点数再保存为字符串。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 尝试编码一个string类型的object以节约空间</span></span><br><span class="line"><span class="function">robj *<span class="title">tryObjectEncoding</span><span class="params">(robj *o)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">long</span> value;</span><br><span class="line">    sds s = o-&gt;ptr;</span><br><span class="line">    <span class="keyword">size_t</span> len;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 需要object的类型为string</span></span><br><span class="line">    serverAssertWithInfo(<span class="literal">NULL</span>,o,o-&gt;type == OBJ_STRING);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果不是OBJ_ENCODING_EMBSTR类型或OBJ_ENCODING_RAW</span></span><br><span class="line">    <span class="keyword">if</span> (!sdsEncodedObject(o)) <span class="keyword">return</span> o;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 引用计数不能大于1，避免共享对象被修改</span></span><br><span class="line">     <span class="keyword">if</span> (o-&gt;refcount &gt; <span class="number">1</span>) <span class="keyword">return</span> o;</span><br><span class="line"></span><br><span class="line">     <span class="comment">// 尝试将string编码为long</span></span><br><span class="line">    len = sdslen(s);</span><br><span class="line">    <span class="keyword">if</span> (len &lt;= <span class="number">20</span> &amp;&amp; string2l(s,len,&amp;value)) &#123;</span><br><span class="line">         <span class="comment">// 如果能够编码为long，那么尝试用一个共享对象</span></span><br><span class="line">         <span class="comment">// redis提前预置了[0, 9999]之间的整数object作为共享对象</span></span><br><span class="line">        <span class="keyword">if</span> ((server.maxmemory == <span class="number">0</span> ||</span><br><span class="line">            !(server.maxmemory_policy &amp; MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) &amp;&amp;</span><br><span class="line">            value &gt;= <span class="number">0</span> &amp;&amp;</span><br><span class="line">            value &lt; OBJ_SHARED_INTEGERS)</span><br><span class="line">        &#123;</span><br><span class="line">            decrRefCount(o);</span><br><span class="line">            incrRefCount(shared.integers[value]);</span><br><span class="line">            <span class="keyword">return</span> shared.integers[value];</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            <span class="keyword">if</span> (o-&gt;encoding == OBJ_ENCODING_RAW) &#123; <span class="comment">// 如果是raw类型，那么可以释放ptr指向的对象，直接修改指针的值即可</span></span><br><span class="line">                sdsfree(o-&gt;ptr);</span><br><span class="line">                o-&gt;encoding = OBJ_ENCODING_INT;</span><br><span class="line">                o-&gt;ptr = (<span class="keyword">void</span>*) value;</span><br><span class="line">                <span class="keyword">return</span> o;</span><br><span class="line">            &#125; <span class="keyword">else</span> <span class="keyword">if</span> (o-&gt;encoding == OBJ_ENCODING_EMBSTR) &#123; <span class="comment">// 对于embstr，则需要减少原对象的引用次数，再创建一个新的</span></span><br><span class="line">                decrRefCount(o);</span><br><span class="line">                <span class="keyword">return</span> createStringObjectFromLongLongForValue(value);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (len &lt;= OBJ_ENCODING_EMBSTR_SIZE_LIMIT) &#123; <span class="comment">// 如果这个字符串比较小</span></span><br><span class="line">        robj *emb;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (o-&gt;encoding == OBJ_ENCODING_EMBSTR) <span class="keyword">return</span> o; <span class="comment">// 并且不是embstr</span></span><br><span class="line">        emb = createEmbeddedStringObject(s,sdslen(s)); <span class="comment">// 那么就创建一个新的，并释放原来的</span></span><br><span class="line">        decrRefCount(o);</span><br><span class="line">        <span class="keyword">return</span> emb;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    trimStringObjectIfNeeded(o); <span class="comment">// 如果实在不能压缩，那么尝试把这个字符串前后的空格回车之类的字符删掉</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> o;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="list对象的编码转换"><a href="#list对象的编码转换" class="headerlink" title="list对象的编码转换"></a>list对象的编码转换</h3><p>较早版本的list会用<code>ziplist</code>或<code>linkedlist</code>来实现，但目前统一用<code>quicklist</code>，如何节省内存完全交给<code>quicklist</code>解决。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">listTypePush</span><span class="params">(robj *subject, robj *value, <span class="keyword">int</span> where)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (subject-&gt;encoding == OBJ_ENCODING_QUICKLIST) &#123;</span><br><span class="line">        <span class="keyword">int</span> pos = (where == LIST_HEAD) ? QUICKLIST_HEAD : QUICKLIST_TAIL;</span><br><span class="line">        value = getDecodedObject(value);</span><br><span class="line">        <span class="keyword">size_t</span> len = sdslen(value-&gt;ptr);</span><br><span class="line">        quicklistPush(subject-&gt;ptr, value-&gt;ptr, len, pos);</span><br><span class="line">        decrRefCount(value);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        serverPanic(<span class="string">"Unknown list encoding"</span>);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="hash对象的编码转换"><a href="#hash对象的编码转换" class="headerlink" title="hash对象的编码转换"></a>hash对象的编码转换</h3><p>hash可以用<code>ziplist</code>或<code>hashtable</code>实现，使用<code>ziplist</code>实现时，只是将键值对顺次插入，然后所有对hash表的操作都可以转换为对列表的操作。</p>
+<p>对于大于<code>hash-max-ziplist-entries</code>的<code>ziplist</code>，redis会尝试将其转换为<code>hashtable</code>，默认值是512；同样的，如果任意一个键或者值的长度大于<code>hash-max-ziplist-value</code>的<code>ziplist</code>也会自动转换，默认阈值是64。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">hashTypeSet</span><span class="params">(robj *o, sds field, sds value, <span class="keyword">int</span> flags)</span> </span>&#123; <span class="comment">// 更新一个KV，flags是个操作标志，可以设置是否允许hash表使用传进来的key/value，或者复制一个新的</span></span><br><span class="line">    <span class="keyword">int</span> update = <span class="number">0</span>; <span class="comment">// 如果是新增一项则为0，更新为1</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (o-&gt;encoding == OBJ_ENCODING_ZIPLIST) &#123; <span class="comment">// 如果是ziplist</span></span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">char</span> *zl, *fptr, *vptr;</span><br><span class="line"></span><br><span class="line">        zl = o-&gt;ptr;</span><br><span class="line">        fptr = ziplistIndex(zl, ZIPLIST_HEAD); <span class="comment">// 从头节点开始</span></span><br><span class="line">        <span class="keyword">if</span> (fptr != <span class="literal">NULL</span>) &#123;</span><br><span class="line">            fptr = ziplistFind(fptr, (<span class="keyword">unsigned</span> <span class="keyword">char</span>*)field, sdslen(field), <span class="number">1</span>); <span class="comment">// 顺序查找key</span></span><br><span class="line">            <span class="keyword">if</span> (fptr != <span class="literal">NULL</span>) &#123; <span class="comment">// 如果找到了key</span></span><br><span class="line">                vptr = ziplistNext(zl, fptr); <span class="comment">// 找到值，也就是ziplist的下一项</span></span><br><span class="line">                serverAssert(vptr != <span class="literal">NULL</span>);</span><br><span class="line">                update = <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">                zl = ziplistDelete(zl, &amp;vptr); <span class="comment">// 从ziplist里删掉这个值</span></span><br><span class="line"></span><br><span class="line">                zl = ziplistInsert(zl, vptr, (<span class="keyword">unsigned</span> <span class="keyword">char</span>*)value, <span class="comment">// 然后把新值写进去</span></span><br><span class="line">                        sdslen(value));</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (!update) &#123;</span><br><span class="line">            <span class="comment">// 如果没找到，那么就把新的KV写到最后</span></span><br><span class="line">            zl = ziplistPush(zl, (<span class="keyword">unsigned</span> <span class="keyword">char</span>*)field, sdslen(field),</span><br><span class="line">                    ZIPLIST_TAIL);</span><br><span class="line">            zl = ziplistPush(zl, (<span class="keyword">unsigned</span> <span class="keyword">char</span>*)value, sdslen(value),</span><br><span class="line">                    ZIPLIST_TAIL);</span><br><span class="line">        &#125;</span><br><span class="line">        o-&gt;ptr = zl;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// 如果大于阈值，就进行类型转换</span></span><br><span class="line">        <span class="keyword">if</span> (hashTypeLength(o) &gt; server.hash_max_ziplist_entries)</span><br><span class="line">            hashTypeConvert(o, OBJ_ENCODING_HT);</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (o-&gt;encoding == OBJ_ENCODING_HT) &#123; <span class="comment">// 如果</span></span><br><span class="line">        dictEntry *de = dictFind(o-&gt;ptr,field); <span class="comment">// 查找对应entry</span></span><br><span class="line">        <span class="keyword">if</span> (de) &#123; <span class="comment">// 如果找到了</span></span><br><span class="line">            sdsfree(dictGetVal(de)); <span class="comment">// 就释放原来的值</span></span><br><span class="line">            <span class="keyword">if</span> (flags &amp; HASH_SET_TAKE_VALUE) &#123; <span class="comment">// 如果允许直接用传进来的值</span></span><br><span class="line">                dictGetVal(de) = value; <span class="comment">// 就写进去</span></span><br><span class="line">                value = <span class="literal">NULL</span>;</span><br><span class="line">            &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                dictGetVal(de) = sdsdup(value); <span class="comment">// 否则复制一个新的</span></span><br><span class="line">            &#125;</span><br><span class="line">            update = <span class="number">1</span>; <span class="comment">// 表示是更新操作</span></span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            sds f,v;</span><br><span class="line">            <span class="keyword">if</span> (flags &amp; HASH_SET_TAKE_FIELD) &#123; <span class="comment">// 如果允许直接用传进来的值，就写进去</span></span><br><span class="line">                f = field;</span><br><span class="line">                field = <span class="literal">NULL</span>;</span><br><span class="line">            &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                f = sdsdup(field);</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">if</span> (flags &amp; HASH_SET_TAKE_VALUE) &#123; <span class="comment">// 同上</span></span><br><span class="line">                v = value;</span><br><span class="line">                value = <span class="literal">NULL</span>;</span><br><span class="line">            &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                v = sdsdup(value);</span><br><span class="line">            &#125;</span><br><span class="line">            dictAdd(o-&gt;ptr,f,v); <span class="comment">// 把这个新的entry写进去</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        serverPanic(<span class="string">"Unknown hash encoding"</span>);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Free SDS strings we did not referenced elsewhere if the flags</span></span><br><span class="line"><span class="comment">     * want this function to be responsible. */</span></span><br><span class="line">    <span class="keyword">if</span> (flags &amp; HASH_SET_TAKE_FIELD &amp;&amp; field) sdsfree(field); <span class="comment">// 如果是传进来用的key，并且没有用到，那么释放</span></span><br><span class="line">    <span class="keyword">if</span> (flags &amp; HASH_SET_TAKE_VALUE &amp;&amp; value) sdsfree(value); <span class="comment">// 类似</span></span><br><span class="line">    <span class="keyword">return</span> update;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="set对象的编码转换"><a href="#set对象的编码转换" class="headerlink" title="set对象的编码转换"></a>set对象的编码转换</h3><p>set可以用<code>intset</code>或<code>hashtable</code>实现，如果是<code>hashtable</code>编码，则只是单纯的将值置为<code>NULL</code>；对于<code>intset</code>，则在非int对象被添加时，或者具体总数大于<code>set-max-intset-entries</code>的时候转换为<code>hashtable</code>，默认值是512。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">setTypeAdd</span><span class="params">(robj *subject, sds value)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> llval;</span><br><span class="line">    <span class="keyword">if</span> (subject-&gt;encoding == OBJ_ENCODING_HT) &#123; <span class="comment">// 如果是hashtable</span></span><br><span class="line">        dict *ht = subject-&gt;ptr;</span><br><span class="line">        dictEntry *de = dictAddRaw(ht,value,<span class="literal">NULL</span>); <span class="comment">// 这个函数只是在key不存在的时候新建一个entry</span></span><br><span class="line">        <span class="keyword">if</span> (de) &#123; <span class="comment">// 如果新建了一个entry，需要写到hashtable里</span></span><br><span class="line">            dictSetKey(ht,de,sdsdup(value));</span><br><span class="line">            dictSetVal(ht,de,<span class="literal">NULL</span>);</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (subject-&gt;encoding == OBJ_ENCODING_INTSET) &#123; <span class="comment">// 如果是intset</span></span><br><span class="line">        <span class="keyword">if</span> (isSdsRepresentableAsLongLong(value,&amp;llval) == C_OK) &#123; <span class="comment">// 尝试将value编码为int</span></span><br><span class="line">            <span class="keyword">uint8_t</span> success = <span class="number">0</span>;</span><br><span class="line">            subject-&gt;ptr = intsetAdd(subject-&gt;ptr,llval,&amp;success); <span class="comment">// 尝试写入intset</span></span><br><span class="line">            <span class="keyword">if</span> (success) &#123;</span><br><span class="line">                <span class="keyword">if</span> (intsetLen(subject-&gt;ptr) &gt; server.set_max_intset_entries) <span class="comment">// 如果添加成功，但intset里包含的数量超过阈值</span></span><br><span class="line">                    setTypeConvert(subject,OBJ_ENCODING_HT); <span class="comment">// 那么尝试转换为hashtable</span></span><br><span class="line">                <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            setTypeConvert(subject,OBJ_ENCODING_HT); <span class="comment">// 否则需要先转换为hashtable</span></span><br><span class="line"></span><br><span class="line">             <span class="comment">// 再尝试把这个值写进去</span></span><br><span class="line">             <span class="comment">// 由于这个hashtable之前是个intset，而我们要插入的值一定不是个合法的int值，说明它一定不在原hashtable里</span></span><br><span class="line">             <span class="comment">// 所以可以直接调用dictAdd</span></span><br><span class="line">            serverAssert(dictAdd(subject-&gt;ptr,sdsdup(value),<span class="literal">NULL</span>) == DICT_OK);</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        serverPanic(<span class="string">"Unknown set encoding"</span>);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="zset对象的编码转换"><a href="#zset对象的编码转换" class="headerlink" title="zset对象的编码转换"></a>zset对象的编码转换</h3><p>zset对象的底层可以是<code>ziplist</code>或<code>zset</code>。当创建有序集合时，总是先创建<code>zset</code>并添加进去，当entry总数不大于<code>zset-max-ziplist-entries</code>且总字节数不大于<code>zset-max-ziplist-value</code>时再转换为<code>ziplist</code>。类似的，如果元素太多，也会将<code>ziplist</code>扩展为<code>zset</code>，默认的<code>zset-max-ziplist-entries</code>为128，<code>zset-max-ziplist-value</code>为64。一个典型的插入流程如下。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">zsetAdd</span><span class="params">(robj *zobj, <span class="keyword">double</span> score, sds ele, <span class="keyword">int</span> *flags, <span class="keyword">double</span> *newscore)</span> </span>&#123; <span class="comment">// 在有序集合里添加一项</span></span><br><span class="line">    <span class="keyword">int</span> incr = (*flags &amp; ZADD_INCR) != <span class="number">0</span>; <span class="comment">// 增加这一项的score</span></span><br><span class="line">    <span class="keyword">int</span> nx = (*flags &amp; ZADD_NX) != <span class="number">0</span>; <span class="comment">// 只有当对应元素不存在时才进行操作</span></span><br><span class="line">    <span class="keyword">int</span> xx = (*flags &amp; ZADD_XX) != <span class="number">0</span>; <span class="comment">// 只有当对应元素存在时进行操作</span></span><br><span class="line">    *flags = <span class="number">0</span>;<span class="comment">// 置为0</span></span><br><span class="line">    <span class="keyword">double</span> curscore;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (isnan(score)) &#123; <span class="comment">// 不允许假如值为NAN的元素</span></span><br><span class="line">        *flags = ZADD_NAN;</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (zobj-&gt;encoding == OBJ_ENCODING_ZIPLIST) &#123; <span class="comment">// 如果底层是ziplist</span></span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">char</span> *eptr;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> ((eptr = zzlFind(zobj-&gt;ptr,ele,&amp;curscore)) != <span class="literal">NULL</span>) &#123; <span class="comment">// 尝试找到这一项，由于ziplist非定长且只能从其中一个项跳到下一项，故采取顺序查找</span></span><br><span class="line">            <span class="keyword">if</span> (nx) &#123; <span class="comment">// 找到了，但不允许修改，则返回</span></span><br><span class="line">                *flags |= ZADD_NOP;</span><br><span class="line">                <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> (incr) &#123; <span class="comment">// 如果要求增加score</span></span><br><span class="line">                score += curscore; <span class="comment">// 那么尝试增加</span></span><br><span class="line">                <span class="keyword">if</span> (isnan(score)) &#123; <span class="comment">// 确保新的score合法</span></span><br><span class="line">                    *flags |= ZADD_NAN;</span><br><span class="line">                    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">                &#125;</span><br><span class="line">                <span class="keyword">if</span> (newscore) *newscore = score; <span class="comment">// 新的score写到返回值里</span></span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> (score != curscore) &#123; <span class="comment">// 如果值发生了变化，那么需要把原来的项删了，再新加一项</span></span><br><span class="line">                zobj-&gt;ptr = zzlDelete(zobj-&gt;ptr,eptr);</span><br><span class="line">                zobj-&gt;ptr = zzlInsert(zobj-&gt;ptr,ele,score); <span class="comment">// 这个插入操作本质上是顺序查找，然后在指定位置先插入值，再插入score，且score需要编码为字符串</span></span><br><span class="line">                *flags |= ZADD_UPDATED; <span class="comment">// 标记为update</span></span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125; <span class="keyword">else</span> <span class="keyword">if</span> (!xx) &#123; <span class="comment">// 如果没找到，且允许在元素不存在时进行操作</span></span><br><span class="line">            zobj-&gt;ptr = zzlInsert(zobj-&gt;ptr,ele,score); <span class="comment">// 那么先插入</span></span><br><span class="line">            <span class="keyword">if</span> (zzlLength(zobj-&gt;ptr) &gt; server.zset_max_ziplist_entries || <span class="comment">// 然后判断entry是否过多</span></span><br><span class="line">                sdslen(ele) &gt; server.zset_max_ziplist_value) <span class="comment">// 或者这个元素太大</span></span><br><span class="line">                zsetConvert(zobj,OBJ_ENCODING_SKIPLIST); <span class="comment">// 如果是的话就转换成跳表</span></span><br><span class="line">            <span class="keyword">if</span> (newscore) *newscore = score; <span class="comment">// 新的score写到返回值里</span></span><br><span class="line">            *flags |= ZADD_ADDED; <span class="comment">// 设置为add操作</span></span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            *flags |= ZADD_NOP;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (zobj-&gt;encoding == OBJ_ENCODING_SKIPLIST) &#123; <span class="comment">// 如果底层是跳表</span></span><br><span class="line">        zset *zs = zobj-&gt;ptr;</span><br><span class="line">        zskiplistNode *znode;</span><br><span class="line">        dictEntry *de;</span><br><span class="line"></span><br><span class="line">        de = dictFind(zs-&gt;dict,ele); <span class="comment">// 那么先尝试在hash表里查有没有这一项</span></span><br><span class="line">        <span class="keyword">if</span> (de != <span class="literal">NULL</span>) &#123; <span class="comment">// 如果有</span></span><br><span class="line">            <span class="keyword">if</span> (nx) &#123; <span class="comment">// 且不允许操作</span></span><br><span class="line">                *flags |= ZADD_NOP; <span class="comment">// 就返回</span></span><br><span class="line">                <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">            &#125;</span><br><span class="line">            curscore = *(<span class="keyword">double</span>*)dictGetVal(de); <span class="comment">// 否则先查到score</span></span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> (incr) &#123; <span class="comment">// 增加score</span></span><br><span class="line">                score += curscore;</span><br><span class="line">                <span class="keyword">if</span> (isnan(score)) &#123;</span><br><span class="line">                    *flags |= ZADD_NAN;</span><br><span class="line">                    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">                &#125;</span><br><span class="line">                <span class="keyword">if</span> (newscore) *newscore = score;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> (score != curscore) &#123; <span class="comment">// 如果score发生了变化，需要修改跳表</span></span><br><span class="line">                znode = zslUpdateScore(zs-&gt;zsl,curscore,ele,score); <span class="comment">// 修改score，简单来说就是把原来的连接关系删了，重新调整一下</span></span><br><span class="line">                dictGetVal(de) = &amp;znode-&gt;score; <span class="comment">// 再修改hashtable里的引用</span></span><br><span class="line">                *flags |= ZADD_UPDATED;</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125; <span class="keyword">else</span> <span class="keyword">if</span> (!xx) &#123; <span class="comment">// 如果没找到，且允许增加</span></span><br><span class="line">            ele = sdsdup(ele); <span class="comment">// 复制一份</span></span><br><span class="line">            znode = zslInsert(zs-&gt;zsl,score,ele); <span class="comment">// 插入到skiplist</span></span><br><span class="line">            serverAssert(dictAdd(zs-&gt;dict,ele,&amp;znode-&gt;score) == DICT_OK); <span class="comment">// 插入到hashtable</span></span><br><span class="line">            *flags |= ZADD_ADDED;</span><br><span class="line">            <span class="keyword">if</span> (newscore) *newscore = score;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            *flags |= ZADD_NOP;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        serverPanic(<span class="string">"Unknown sorted set encoding"</span>);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="内存回收和对象共享"><a href="#内存回收和对象共享" class="headerlink" title="内存回收和对象共享"></a>内存回收和对象共享</h2><p>由于redis的对象之间没有引用关系，因此简单的引用计数就可以判断一个object是否仍然被引用。这个东西比较像C++里的智能指针，且在引用计数被减为0的时候立刻释放内存。</p>
+<p>引用计数可以很方便的实现共享对象。不过这个东西有点歧义，有时候共享对象也指redis启动时创建的一系列对象。如下所示，这些对象在创建的时候会把引用计数计为<code>OBJ_SHARED_REFCOUNT</code>，且在操作引用计数的时候会判断引用计数是否为这个特殊值，如果是的话则不进行任何操作。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">sharedObjectsStruct</span> &#123;</span></span><br><span class="line">    robj *crlf, *ok, *err, *emptybulk, *czero, *cone, *cnegone, *pong, *space,</span><br><span class="line">    *colon, *nullbulk, *nullmultibulk, *queued,</span><br><span class="line">    *emptymultibulk, *wrongtypeerr, *nokeyerr, *syntaxerr, *sameobjecterr,</span><br><span class="line">    *outofrangeerr, *noscripterr, *loadingerr, *slowscripterr, *bgsaveerr,</span><br><span class="line">    *masterdownerr, *roslaveerr, *execaborterr, *noautherr, *noreplicaserr,</span><br><span class="line">    *busykeyerr, *oomerr, *plus, *messagebulk, *pmessagebulk, *subscribebulk,</span><br><span class="line">    *unsubscribebulk, *psubscribebulk, *punsubscribebulk, *del, *unlink,</span><br><span class="line">    *rpop, *lpop, *lpush, *rpoplpush, *zpopmin, *zpopmax, *emptyscan,</span><br><span class="line">    *select[PROTO_SHARED_SELECT_CMDS],</span><br><span class="line">    *integers[OBJ_SHARED_INTEGERS],</span><br><span class="line">    *mbulkhdr[OBJ_SHARED_BULKHDR_LEN], <span class="comment">/* "*&lt;value&gt;\r\n" */</span></span><br><span class="line">    *bulkhdr[OBJ_SHARED_BULKHDR_LEN];  <span class="comment">/* "$&lt;value&gt;\r\n" */</span></span><br><span class="line">    sds minstring, maxstring;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<h2 id="数据淘汰机制"><a href="#数据淘汰机制" class="headerlink" title="数据淘汰机制"></a>数据淘汰机制</h2><p>作为缓存组件，redis不保证已保存的数据会一直保存下去，持久性应当由数据库来完成。这也意味着理论上redis可以在任意时刻废弃任意对象。当然一般来说还是在内存比较紧张的时候废弃对象，目前redis大致支持LRU、LFU、TTL算法，每个object的相关信息记录在<code>robj-&gt;lru</code>里。</p>
+<h3 id="LRU（Least-Recently-Used）"><a href="#LRU（Least-Recently-Used）" class="headerlink" title="LRU（Least Recently Used）"></a>LRU（Least Recently Used）</h3><p>最近最旧未使用算法，即从当前时刻开始，优先淘汰最旧未使用的对象。</p>
+<p>比较精准的LRU的做法是用hash表和双向链表来实现，使用的时候如果hash表里没有就在hash表里加一项，再把链表里的指针移动到队尾；废弃的时候从队首拿出来，并从hash表里删除。当然这么搞的话每次使用时都要更新两个数据结构，相对比较麻烦。</p>
+<p>redis的做法就比较简单了：从目标集合里（可以是已过期数据集合，也可以是所有数据集合）随机找几个对象，按LRU算法删掉。无论使用哪种算法，redis都是先从一个object集合里随机挑几个对象，应用相应算法进行淘汰。随机算法也比较简单，就是随机选一些桶，把桶里的元素全返回，如果不够则继续。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">int</span> <span class="title">dictGetSomeKeys</span><span class="params">(dict *d, dictEntry **des, <span class="keyword">unsigned</span> <span class="keyword">int</span> count)</span> </span>&#123; <span class="comment">// 随机取一些数据</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> j; </span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> tables; </span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> stored = <span class="number">0</span>, maxsizemask;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> maxsteps;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (dictSize(d) &lt; count) count = dictSize(d);</span><br><span class="line">    maxsteps = count*<span class="number">10</span>; <span class="comment">// 最多尝试count*10次</span></span><br><span class="line"></span><br><span class="line">    <span class="comment">// 由于redis是渐进式hash，需要考虑这方面问题</span></span><br><span class="line">    <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; count; j++) &#123;</span><br><span class="line">        <span class="keyword">if</span> (dictIsRehashing(d))</span><br><span class="line">            _dictRehashStep(d);</span><br><span class="line">        <span class="keyword">else</span></span><br><span class="line">            <span class="keyword">break</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    tables = dictIsRehashing(d) ? <span class="number">2</span> : <span class="number">1</span>;</span><br><span class="line">    maxsizemask = d-&gt;ht[<span class="number">0</span>].sizemask; <span class="comment">// 两个table中比较大的那个</span></span><br><span class="line">    <span class="keyword">if</span> (tables &gt; <span class="number">1</span> &amp;&amp; maxsizemask &lt; d-&gt;ht[<span class="number">1</span>].sizemask)</span><br><span class="line">        maxsizemask = d-&gt;ht[<span class="number">1</span>].sizemask;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> i = random() &amp; maxsizemask; <span class="comment">// 随机取一个值</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> emptylen = <span class="number">0</span>; <span class="comment">// 当前一共遇到多少个空桶</span></span><br><span class="line">    <span class="keyword">while</span>(stored &lt; count &amp;&amp; maxsteps--) &#123;</span><br><span class="line">        <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; tables; j++) &#123;</span><br><span class="line">            <span class="comment">// rehash不变性使我们可以忽略一些桶</span></span><br><span class="line">            <span class="keyword">if</span> (tables == <span class="number">2</span> &amp;&amp; j == <span class="number">0</span> &amp;&amp; i &lt; (<span class="keyword">unsigned</span> <span class="keyword">long</span>) d-&gt;rehashidx) &#123;</span><br><span class="line">                <span class="keyword">if</span> (i &gt;= d-&gt;ht[<span class="number">1</span>].size)</span><br><span class="line">                    i = d-&gt;rehashidx;</span><br><span class="line">                <span class="keyword">else</span></span><br><span class="line">                    <span class="keyword">continue</span>;</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">if</span> (i &gt;= d-&gt;ht[j].size) <span class="keyword">continue</span>; <span class="comment">// 越界</span></span><br><span class="line">            dictEntry *he = d-&gt;ht[j].table[i];</span><br><span class="line"></span><br><span class="line">            <span class="comment">/* Count contiguous empty buckets, and jump to other</span></span><br><span class="line"><span class="comment">             * locations if they reach 'count' (with a minimum of 5). */</span></span><br><span class="line">             <span class="comment">// 遇到一个空桶</span></span><br><span class="line">            <span class="keyword">if</span> (he == <span class="literal">NULL</span>) &#123;</span><br><span class="line">                emptylen++;</span><br><span class="line">                <span class="keyword">if</span> (emptylen &gt;= <span class="number">5</span> &amp;&amp; emptylen &gt; count) &#123; <span class="comment">// 如果连续遇到5个以上空桶，且总数超过目标数</span></span><br><span class="line">                    i = random() &amp; maxsizemask; <span class="comment">// 那么重新选一个位置开始</span></span><br><span class="line">                    emptylen = <span class="number">0</span>;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                emptylen = <span class="number">0</span>; <span class="comment">// 否则清空</span></span><br><span class="line">                <span class="keyword">while</span> (he) &#123; <span class="comment">// 把这个桶里的object全返回出去</span></span><br><span class="line">                    *des = he;</span><br><span class="line">                    des++;</span><br><span class="line">                    he = he-&gt;next;</span><br><span class="line">                    stored++;</span><br><span class="line">                    <span class="keyword">if</span> (stored == count) <span class="keyword">return</span> stored;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        i = (i+<span class="number">1</span>) &amp; maxsizemask;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> stored;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">int</span> <span class="title">LRU_CLOCK</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123; <span class="comment">// LRU时间</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> lruclock;</span><br><span class="line">    <span class="keyword">if</span> (<span class="number">1000</span>/server.hz &lt;= LRU_CLOCK_RESOLUTION) &#123; <span class="comment">// 时钟分辨率，要求服务器的频率高于10000，可以设置</span></span><br><span class="line">        atomicGet(server.lruclock,lruclock); <span class="comment">// redis自己维护的一个始终</span></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        lruclock = getLRUClock(); <span class="comment">// 系统调用</span></span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> lruclock;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span> <span class="title">estimateObjectIdleTime</span><span class="params">(robj *o)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="keyword">long</span> lruclock = LRU_CLOCK(); <span class="comment">// 当前时间</span></span><br><span class="line">    <span class="keyword">if</span> (lruclock &gt;= o-&gt;lru) &#123; <span class="comment">// 如果当前事件比该对象的lru时间大</span></span><br><span class="line">        <span class="keyword">return</span> (lruclock - o-&gt;lru) * LRU_CLOCK_RESOLUTION; <span class="comment">// 那么相减就好</span></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> (lruclock + (LRU_CLOCK_MAX - o-&gt;lru)) * <span class="comment">// 否则说明过了一轮，需要再加上LRU_CLOCK_MAX</span></span><br><span class="line">                    LRU_CLOCK_RESOLUTION;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="LFU（Least-Frequently-Used）"><a href="#LFU（Least-Frequently-Used）" class="headerlink" title="LFU（Least Frequently Used）"></a>LFU（Least Frequently Used）</h3><p>最近最少使用算法，即在最近一段时间内，优先淘汰使用频率最低的对象。计算频次的做法也比较好理解：每过一定时间减少固定次数。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUGetTimeInMinutes</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123; <span class="comment">// LRU算法下的当前时间</span></span><br><span class="line">    <span class="keyword">return</span> (server.unixtime/<span class="number">60</span>) &amp; <span class="number">65535</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUTimeElapsed</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">long</span> ldt)</span> </span>&#123; <span class="comment">// 根据object高16位计算已经过了多久</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> now = LFUGetTimeInMinutes();</span><br><span class="line">    <span class="keyword">if</span> (now &gt;= ldt) <span class="keyword">return</span> now-ldt; <span class="comment">// 和上面那个类似，计算的时候需要取模</span></span><br><span class="line">    <span class="keyword">return</span> <span class="number">65535</span>-ldt+now;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUDecrAndReturn</span><span class="params">(robj *o)</span> </span>&#123; <span class="comment">// 降低访问频次并返回频次</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> ldt = o-&gt;lru &gt;&gt; <span class="number">8</span>; <span class="comment">// 高16位用来表示最近降低时间</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> counter = o-&gt;lru &amp; <span class="number">255</span>; <span class="comment">// 低8位来表示访问次数</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> num_periods = server.lfu_decay_time ? LFUTimeElapsed(ldt) / server.lfu_decay_time : <span class="number">0</span>; <span class="comment">// 衰减，假设距离上次更新过了N个周期，那么就减去N*m个统计次数</span></span><br><span class="line">    <span class="keyword">if</span> (num_periods)</span><br><span class="line">        counter = (num_periods &gt; counter) ? <span class="number">0</span> : counter - num_periods;</span><br><span class="line">    <span class="keyword">return</span> counter; <span class="comment">// 注意，最后用的时候使用255-counter作为idle（空闲）值</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">uint8_t</span> LFULogIncr(<span class="keyword">uint8_t</span> counter) &#123; <span class="comment">// 增加计数器函数，估计是考虑到counter取值范围很小，所以增加计数难度</span></span><br><span class="line">      <span class="keyword">if</span> (counter == <span class="number">255</span>) <span class="keyword">return</span> <span class="number">255</span>;</span><br><span class="line">      <span class="keyword">double</span> r = (<span class="keyword">double</span>)rand()/RAND_MAX;</span><br><span class="line">      <span class="keyword">double</span> baseval = counter - LFU_INIT_VAL; <span class="comment">// 注意初始会给一个object设置访问频次为5，避免一个object被创建后立刻删除</span></span><br><span class="line">      <span class="keyword">if</span> (baseval &lt; <span class="number">0</span>) baseval = <span class="number">0</span>;</span><br><span class="line">      <span class="keyword">double</span> p = <span class="number">1.0</span>/(baseval*server.lfu_log_factor+<span class="number">1</span>); </span><br><span class="line">      <span class="keyword">if</span> (r &lt; p) counter++; <span class="comment">// 看看有没有通过测试</span></span><br><span class="line">      <span class="keyword">return</span> counter;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="TTL（Time-to-Live）"><a href="#TTL（Time-to-Live）" class="headerlink" title="TTL（Time to Live）"></a>TTL（Time to Live）</h3><p>剩余生存时间，即淘汰超过存活时间的对象。这个算法就比较简单了：<code>idle = ULLONG_MAX - (long)dictGetVal(de);</code>。看起来是直接把de的值的指针拿出来计算，没搞懂为什么可以这么来。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/redis/" rel="tag"># redis</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/10/08/docker-learn1/" rel="next" title="docker学习（1）">
+                  <i class="fa fa-chevron-left"></i> docker学习（1）
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#对象的类型与编码"><span class="nav-number">1.</span> <span class="nav-text">对象的类型与编码</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#string类型的编码转换"><span class="nav-number">1.1.</span> <span class="nav-text">string类型的编码转换</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#list对象的编码转换"><span class="nav-number">1.2.</span> <span class="nav-text">list对象的编码转换</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#hash对象的编码转换"><span class="nav-number">1.3.</span> <span class="nav-text">hash对象的编码转换</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#set对象的编码转换"><span class="nav-number">1.4.</span> <span class="nav-text">set对象的编码转换</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#zset对象的编码转换"><span class="nav-number">1.5.</span> <span class="nav-text">zset对象的编码转换</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#内存回收和对象共享"><span class="nav-number">2.</span> <span class="nav-text">内存回收和对象共享</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#数据淘汰机制"><span class="nav-number">3.</span> <span class="nav-text">数据淘汰机制</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#LRU（Least-Recently-Used）"><span class="nav-number">3.1.</span> <span class="nav-text">LRU（Least Recently Used）</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#LFU（Least-Frequently-Used）"><span class="nav-number">3.2.</span> <span class="nav-text">LFU（Least Frequently Used）</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#TTL（Time-to-Live）"><span class="nav-number">3.3.</span> <span class="nav-text">TTL（Time to Live）</span></a></li></ol></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">23</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">27</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
