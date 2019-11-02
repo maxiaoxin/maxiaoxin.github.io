@@ -191,6 +191,118 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/02/redis-read4/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/11/02/redis-read4/" class="post-title-link" itemprop="url">redis学习（4）数据库</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-11-02 00:00:00 / Modified: 18:31:49" itemprop="dateCreated datePublished" datetime="2019-11-02T00:00:00+08:00">2019-11-02</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>redis将数据按数据库（database）进行区分，有点像namespace。<code>redisServer</code>结构体维护了一个指向<code>redisDb</code>数组的指针，第i号database所使用的就是<code>redisDb[i]</code>，其定义如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">redisDb</span> &#123;</span></span><br><span class="line">    dict *dict;  <span class="comment">// 存放具体数据的字典，也称键空间（keyspace）</span></span><br><span class="line">    dict *expires; <span class="comment">// 存放设有超时时间的key的字典</span></span><br><span class="line">    dict *blocking_keys; <span class="comment">// 用以实现阻塞操作</span></span><br><span class="line">    dict *ready_keys; <span class="comment">// 用以实现阻塞操作</span></span><br><span class="line">    dict *watched_keys; <span class="comment">// 用以实现监控key</span></span><br><span class="line">    <span class="keyword">int</span> id; <span class="comment">// 数据库id</span></span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> avg_ttl; <span class="comment">// 平均TTL，只用来统计数据</span></span><br><span class="line">    <span class="built_in">list</span> *defrag_later;  <span class="comment">// 需要整理碎片的key</span></span><br><span class="line">&#125; redisDb;</span><br></pre></td></tr></table></figure>
+
+<h2 id="键空间"><a href="#键空间" class="headerlink" title="键空间"></a>键空间</h2><p>dict存放了这个database的所有键和值，键都是<code>string</code>类型的<code>robj</code>，值可以是之前提到的5种<code>robj</code>。基本上常见的KV数据库的CRUD流程大概就和操作一个dict差不多，当然也有一些额外的操作：</p>
+<ul>
+<li>几乎所有操作前都要检查这个key有没有过期（过期信息在<code>redisDb-&gt;expires</code>字典里），如果过期则认为这个键不存在，且如果发现过期的键，则<ul>
+<li>如果是master节点，需要将过期操作推送到slave节点和AOF文件</li>
+<li>发送一个<code>NOTIFY_EXPIRED</code>事件</li>
+<li>根据<code>lazyfree-lazy-expire</code>判断是否立即删除这个key，和删除操作类似类似</li>
+</ul>
+</li>
+<li>同样的，几乎所有操作都会修改对应object的<code>lru</code>（最近访问时间/访问频次）</li>
+<li>判断操作类型是否正确，比如<code>sadd</code>命令只能操作<code>set</code>对象</li>
+<li>如果对现有的对象进行了修改，则需要根据<code>redisDb-&gt;watched_keys</code>判断这个key是否有监控，如果有的话需要将相关的<code>client</code>的flag添加<code>CLIENT_DIRTY_CAS</code>标记，并发送修改事件</li>
+<li>对于删除操作，需要根据<code>lazyfree-lazy-expire</code>配置判断是否立即删除这个key<ul>
+<li>同步删就是个dict删除操作，且如果是集群模式还要修改对应的slot</li>
+<li>异步删的话需要从keyspace里去掉这个entry，然后判断对应的类型是否“容易”删除（目前是根据<code>quicklist</code>、<code>skiplist</code>、<code>hashtable</code>所含元素的多少来判断），如果容易删除就和同步删的操作类似，否则增加一个<code>bio_job</code>让后台线程删（这里终于用到同步了）</li>
+</ul>
+</li>
+<li>读数据的时候还需要统计缓存命中次数</li>
+</ul>
+<p>这里代码分布在不同函数里，就只贴删除相关的代码了。顺便感慨一下单线程的好处，单线程意味着几乎所有操作都具有原子性（如果不是刻意打断的，比如rehash），如果是多线程的话需要加非常多的判断和锁，想想就很麻烦。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">delGenericCommand</span><span class="params">(client *c, <span class="keyword">int</span> lazy)</span> </span>&#123; <span class="comment">// 删除接口</span></span><br><span class="line">    <span class="keyword">int</span> numdel = <span class="number">0</span>, j;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">for</span> (j = <span class="number">1</span>; j &lt; c-&gt;argc; j++) &#123; <span class="comment">// 依次删除要删除的键</span></span><br><span class="line">        expireIfNeeded(c-&gt;db,c-&gt;argv[j]); <span class="comment">// 判断是否已过期</span></span><br><span class="line">        <span class="keyword">int</span> deleted  = lazy ? dbAsyncDelete(c-&gt;db,c-&gt;argv[j]) : <span class="comment">// 同步或异步删除</span></span><br><span class="line">                              dbSyncDelete(c-&gt;db,c-&gt;argv[j]);</span><br><span class="line">        <span class="keyword">if</span> (deleted) &#123; <span class="comment">// 如果删除成功</span></span><br><span class="line">            signalModifiedKey(c-&gt;db,c-&gt;argv[j]); <span class="comment">// 则需要通知所有watch这个键的client</span></span><br><span class="line">            notifyKeyspaceEvent(NOTIFY_GENERIC, <span class="comment">// 然后发送一个删除事件</span></span><br><span class="line">                <span class="string">"del"</span>,c-&gt;argv[j],c-&gt;db-&gt;id);</span><br><span class="line">            server.dirty++; <span class="comment">// 并增加一个dirty计数</span></span><br><span class="line">            numdel++;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    addReplyLongLong(c,numdel);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">dbSyncDelete</span><span class="params">(redisDb *db, robj *key)</span> </span>&#123; 同步删除</span><br><span class="line">    <span class="keyword">if</span> (dictSize(db-&gt;expires) &gt; <span class="number">0</span>) dictDelete(db-&gt;expires,key-&gt;ptr); <span class="comment">// 在expires里删除这条记录</span></span><br><span class="line">    <span class="keyword">if</span> (dictDelete(db-&gt;dict,key-&gt;ptr) == DICT_OK) &#123; <span class="comment">// 然后从键空间里删除这条记录</span></span><br><span class="line">        <span class="keyword">if</span> (server.cluster_enabled) slotToKeyDel(key); <span class="comment">// 如果是集群模式还要修改slot</span></span><br><span class="line">        <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> LAZYFREE_THRESHOLD 64</span></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">dbAsyncDelete</span><span class="params">(redisDb *db, robj *key)</span> </span>&#123; <span class="comment">// 异步删除</span></span><br><span class="line">    <span class="keyword">if</span> (dictSize(db-&gt;expires) &gt; <span class="number">0</span>) dictDelete(db-&gt;expires,key-&gt;ptr); <span class="comment">// 先从expires里删除这条记录</span></span><br><span class="line"></span><br><span class="line">    dictEntry *de = dictUnlink(db-&gt;dict,key-&gt;ptr); <span class="comment">// 然后从db-&gt;dict里删掉这个entry，但还没删具体数据</span></span><br><span class="line">    <span class="keyword">if</span> (de) &#123; <span class="comment">// 如果这个entry存在</span></span><br><span class="line">        robj *val = dictGetVal(de); <span class="comment">// 那么先拿到这个值</span></span><br><span class="line">        <span class="keyword">size_t</span> free_effort = lazyfreeGetFreeEffort(val); <span class="comment">// 再计算要删这个值的难度，大致就是根据hashtable、skiplist、quicklist的长度来判断</span></span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (free_effort &gt; LAZYFREE_THRESHOLD &amp;&amp; val-&gt;refcount == <span class="number">1</span>) &#123; <span class="comment">// 如果难度超过阈值，且引用计数为1，说明应当释放内存</span></span><br><span class="line">            atomicIncr(lazyfree_objects,<span class="number">1</span>); <span class="comment">// 那么增加要惰性删除的object数</span></span><br><span class="line">            bioCreateBackgroundJob(BIO_LAZY_FREE,val,<span class="literal">NULL</span>,<span class="literal">NULL</span>); <span class="comment">// 把这个值扔到待删除队列里</span></span><br><span class="line">            dictSetVal(db-&gt;dict,de,<span class="literal">NULL</span>); <span class="comment">// 并把这个entry的value置空</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (de) &#123; <span class="comment">// 这样一通操作下来，就可以立即删除entry里的key和value</span></span><br><span class="line">        dictFreeUnlinkedEntry(db-&gt;dict,de); <span class="comment">// 删除这个entry的key和value（其实是引用计数-1）</span></span><br><span class="line">        <span class="keyword">if</span> (server.cluster_enabled) slotToKeyDel(key); <span class="comment">// 如果是集群模式还要修改slot</span></span><br><span class="line">        <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="过期时间"><a href="#过期时间" class="headerlink" title="过期时间"></a>过期时间</h2><p>每个object都可以设置过期时间，可以指定过多长时间后失效（<code>EXPIRE</code>和<code>PEXPIRE</code>），或者在某一时刻后失效（<code>EXPIREAT</code>和<code>PEXPIREAT</code>）。不过这几个命令最后都转换为在某个时刻过期来实现，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">setExpire</span><span class="params">(client *c, redisDb *db, robj *key, <span class="keyword">long</span> <span class="keyword">long</span> when)</span> </span>&#123; <span class="comment">// 设置过期时间</span></span><br><span class="line">    dictEntry *kde, *de;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 简单来说就是保存到db-&gt;expires里，键和db-&gt;dict的键共享，值则作为一个long保存到entry-&gt;val里</span></span><br><span class="line">    kde = dictFind(db-&gt;dict,key-&gt;ptr);</span><br><span class="line">    serverAssertWithInfo(<span class="literal">NULL</span>,key,kde != <span class="literal">NULL</span>);</span><br><span class="line">    de = dictAddOrFind(db-&gt;expires,dictGetKey(kde));</span><br><span class="line">    dictSetSignedIntegerVal(de,when);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// slave节点需要记录这个过期时间</span></span><br><span class="line">    <span class="keyword">int</span> writable_slave = server.masterhost &amp;&amp; server.repl_slave_ro == <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">if</span> (c &amp;&amp; writable_slave &amp;&amp; !(c-&gt;flags &amp; CLIENT_MASTER))</span><br><span class="line">        rememberSlaveKeyWithExpire(db,key);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">expireGenericCommand</span><span class="params">(client *c, <span class="keyword">long</span> <span class="keyword">long</span> basetime, <span class="keyword">int</span> unit)</span> </span>&#123; <span class="comment">// 处理过期命令</span></span><br><span class="line">    robj *key = c-&gt;argv[<span class="number">1</span>], *param = c-&gt;argv[<span class="number">2</span>];</span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> when; <span class="comment">// 过期时间</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (getLongLongFromObjectOrReply(c, param, &amp;when, <span class="literal">NULL</span>) != C_OK) <span class="comment">// 过期时间存放在client-&gt;argv[2]里，是一个long型对象</span></span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (unit == UNIT_SECONDS) when *= <span class="number">1000</span>;</span><br><span class="line">    when += basetime;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (lookupKeyWrite(c-&gt;db,key) == <span class="literal">NULL</span>) &#123; <span class="comment">// 如果不存在这个键，则不进行任何处理</span></span><br><span class="line">        addReply(c,shared.czero);</span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果已经过期了，且不是master节点或者loading状态</span></span><br><span class="line">    <span class="keyword">if</span> (when &lt;= mstime() &amp;&amp; !server.loading &amp;&amp; !server.masterhost) &#123;</span><br><span class="line">        robj *aux;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">int</span> deleted = server.lazyfree_lazy_expire ? dbAsyncDelete(c-&gt;db,key) : <span class="comment">// 那么需要先进行删除操作</span></span><br><span class="line">                                                    dbSyncDelete(c-&gt;db,key);</span><br><span class="line">        serverAssertWithInfo(c,key,deleted);</span><br><span class="line">        server.dirty++;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// 需要将用户命令修改为DEL或UNLINK，发送一个删除事件，并返回</span></span><br><span class="line">        aux = server.lazyfree_lazy_expire ? shared.unlink : shared.del;</span><br><span class="line">        rewriteClientCommandVector(c,<span class="number">2</span>,aux,key);</span><br><span class="line">        signalModifiedKey(c-&gt;db,key);</span><br><span class="line">        notifyKeyspaceEvent(NOTIFY_GENERIC,<span class="string">"del"</span>,key,c-&gt;db-&gt;id);</span><br><span class="line">        addReply(c, shared.cone);</span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="comment">// 否则就设置一下过期时间，发送expire事件并返回</span></span><br><span class="line">        setExpire(c,c-&gt;db,key,when);</span><br><span class="line">        addReply(c,shared.cone);</span><br><span class="line">        signalModifiedKey(c-&gt;db,key);</span><br><span class="line">        notifyKeyspaceEvent(NOTIFY_GENERIC,<span class="string">"expire"</span>,key,c-&gt;db-&gt;id);</span><br><span class="line">        server.dirty++;</span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>判断是否过期也很简单，因为expires里保存了具体的过期时间，那么对比一下就行了</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">long</span> <span class="keyword">long</span> <span class="title">getExpire</span><span class="params">(redisDb *db, robj *key)</span> </span>&#123; <span class="comment">//取出过期时间</span></span><br><span class="line">    dictEntry *de;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (dictSize(db-&gt;expires) == <span class="number">0</span> || <span class="comment">// 没找到就返回-1</span></span><br><span class="line">       (de = dictFind(db-&gt;expires,key-&gt;ptr)) == <span class="literal">NULL</span>) <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 既然能在expires里找到这个key，那么理论上键空间里也应该有这个key</span></span><br><span class="line">    serverAssertWithInfo(<span class="literal">NULL</span>,key,dictFind(db-&gt;dict,key-&gt;ptr) != <span class="literal">NULL</span>);</span><br><span class="line">    <span class="keyword">return</span> dictGetSignedIntegerVal(de); <span class="comment">// 以有符号整数的形式取出</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">keyIsExpired</span><span class="params">(redisDb *db, robj *key)</span> </span>&#123; <span class="comment">// 判断这个key是否过期</span></span><br><span class="line">    <span class="keyword">mstime_t</span> when = getExpire(db,key); <span class="comment">// 具体过期时间</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (when &lt; <span class="number">0</span>) <span class="keyword">return</span> <span class="number">0</span>; <span class="comment">// 小于0表示永不过期</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (server.loading) <span class="keyword">return</span> <span class="number">0</span>; <span class="comment">// loading状态不做过期检查</span></span><br><span class="line"></span><br><span class="line">    <span class="comment">// 当前时间，具体为啥做判断我也不清楚</span></span><br><span class="line">    <span class="keyword">mstime_t</span> now = server.lua_caller ? server.lua_time_start : mstime();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> now &gt; when;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">expireIfNeeded</span><span class="params">(redisDb *db, robj *key)</span> </span>&#123; </span><br><span class="line">    <span class="keyword">if</span> (!keyIsExpired(db,key)) <span class="keyword">return</span> <span class="number">0</span>; <span class="comment">// 键如果没过期就返回没过期</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (server.masterhost != <span class="literal">NULL</span>) <span class="keyword">return</span> <span class="number">1</span>; <span class="comment">// 只有master节点能够认为过期的键已失效</span></span><br><span class="line"></span><br><span class="line">    server.stat_expiredkeys++; <span class="comment">// 统计过期键</span></span><br><span class="line">    propagateExpire(db,key,server.lazyfree_lazy_expire); <span class="comment">// 向slave节点和AOF文件发送过期操作</span></span><br><span class="line">    notifyKeyspaceEvent(NOTIFY_EXPIRED, <span class="comment">// 发送一个事件</span></span><br><span class="line">        <span class="string">"expired"</span>,key,db-&gt;id);</span><br><span class="line">    <span class="keyword">return</span> server.lazyfree_lazy_expire ? dbAsyncDelete(db,key) : <span class="comment">// 然后同步或异步的删除</span></span><br><span class="line">                                         dbSyncDelete(db,key);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="过期数据删除策略"><a href="#过期数据删除策略" class="headerlink" title="过期数据删除策略"></a>过期数据删除策略</h2><p>《Redis设计与实现》里提到了三种删除策略：</p>
+<ul>
+<li>定时删除：由于我们知道什么时候过期，那么可以开启一个定时器，在对应时间唤醒一个删除操作</li>
+<li>惰性删除：读到过期数据的时候再将其删除</li>
+<li>定期删除：隔一段时间清理过期的数据</li>
+</ul>
+<p>显然第一种做法最精确，且能保证内存消耗最小，前提是需要创建和删除timer，这个timer的代价一般不会太小。第二种做法一方面会造成内存泄漏（过期数据不访问就不会被删除），另一方面会提高读写延时，因为删除一个复杂的对象还是很花时间的。</p>
+<p>Redis做法是第三种，且理论上这个线程是可以侦测当前CPU是否空闲，从而决定删除频率。具体做法和redis的事件机制有关，之后再看看。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/10/28/redis-read3/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -231,7 +343,7 @@
                   <i class="fa fa-calendar-check-o"></i>
                 </span>
                 <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-10-31 22:30:01" itemprop="dateModified" datetime="2019-10-31T22:30:01+08:00">2019-10-31</time>
+                <time title="Modified: 2019-11-02 14:31:14" itemprop="dateModified" datetime="2019-11-02T14:31:14+08:00">2019-11-02</time>
               </span>
             
           
@@ -283,7 +395,7 @@
 <h3 id="LFU（Least-Frequently-Used）"><a href="#LFU（Least-Frequently-Used）" class="headerlink" title="LFU（Least Frequently Used）"></a>LFU（Least Frequently Used）</h3><p>最近最少使用算法，即在最近一段时间内，优先淘汰使用频率最低的对象。计算频次的做法也比较好理解：每过一定时间减少固定次数。</p>
 <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUGetTimeInMinutes</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123; <span class="comment">// LRU算法下的当前时间</span></span><br><span class="line">    <span class="keyword">return</span> (server.unixtime/<span class="number">60</span>) &amp; <span class="number">65535</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUTimeElapsed</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">long</span> ldt)</span> </span>&#123; <span class="comment">// 根据object高16位计算已经过了多久</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> now = LFUGetTimeInMinutes();</span><br><span class="line">    <span class="keyword">if</span> (now &gt;= ldt) <span class="keyword">return</span> now-ldt; <span class="comment">// 和上面那个类似，计算的时候需要取模</span></span><br><span class="line">    <span class="keyword">return</span> <span class="number">65535</span>-ldt+now;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUDecrAndReturn</span><span class="params">(robj *o)</span> </span>&#123; <span class="comment">// 降低访问频次并返回频次</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> ldt = o-&gt;lru &gt;&gt; <span class="number">8</span>; <span class="comment">// 高16位用来表示最近降低时间</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> counter = o-&gt;lru &amp; <span class="number">255</span>; <span class="comment">// 低8位来表示访问次数</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> num_periods = server.lfu_decay_time ? LFUTimeElapsed(ldt) / server.lfu_decay_time : <span class="number">0</span>; <span class="comment">// 衰减，假设距离上次更新过了N个周期，那么就减去N*m个统计次数</span></span><br><span class="line">    <span class="keyword">if</span> (num_periods)</span><br><span class="line">        counter = (num_periods &gt; counter) ? <span class="number">0</span> : counter - num_periods;</span><br><span class="line">    <span class="keyword">return</span> counter; <span class="comment">// 注意，最后用的时候使用255-counter作为idle（空闲）值</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">uint8_t</span> LFULogIncr(<span class="keyword">uint8_t</span> counter) &#123; <span class="comment">// 增加计数器函数，估计是考虑到counter取值范围很小，所以增加计数难度</span></span><br><span class="line">      <span class="keyword">if</span> (counter == <span class="number">255</span>) <span class="keyword">return</span> <span class="number">255</span>;</span><br><span class="line">      <span class="keyword">double</span> r = (<span class="keyword">double</span>)rand()/RAND_MAX;</span><br><span class="line">      <span class="keyword">double</span> baseval = counter - LFU_INIT_VAL; <span class="comment">// 注意初始会给一个object设置访问频次为5，避免一个object被创建后立刻删除</span></span><br><span class="line">      <span class="keyword">if</span> (baseval &lt; <span class="number">0</span>) baseval = <span class="number">0</span>;</span><br><span class="line">      <span class="keyword">double</span> p = <span class="number">1.0</span>/(baseval*server.lfu_log_factor+<span class="number">1</span>); </span><br><span class="line">      <span class="keyword">if</span> (r &lt; p) counter++; <span class="comment">// 看看有没有通过测试</span></span><br><span class="line">      <span class="keyword">return</span> counter;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
 
-<h3 id="TTL（Time-to-Live）"><a href="#TTL（Time-to-Live）" class="headerlink" title="TTL（Time to Live）"></a>TTL（Time to Live）</h3><p>剩余生存时间，即淘汰超过存活时间的对象。这个算法就比较简单了：<code>idle = ULLONG_MAX - (long)dictGetVal(de);</code>。看起来是直接把de的值的指针拿出来计算，没搞懂为什么可以这么来。</p>
+<h3 id="TTL（Time-to-Live）"><a href="#TTL（Time-to-Live）" class="headerlink" title="TTL（Time to Live）"></a>TTL（Time to Live）</h3><p>剩余生存时间，即淘汰超过存活时间的对象。这个算法就比较简单了：<code>idle = ULLONG_MAX - (long)dictGetVal(de);</code>，其中de指向expire字典里的entry，其value是以long形式存的过期时间限制。</p>
 
         
       
@@ -1474,124 +1586,6 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/16/jvm7/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/09/16/jvm7/" class="post-title-link" itemprop="url">JVM学习（7）编译期优化</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-09-16 00:00:00 / Modified: 21:08:08" itemprop="dateCreated datePublished" datetime="2019-09-16T00:00:00+08:00">2019-09-16</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>这一章主要介绍关于在.java代码编译为.class文件时使用的一些优化技术。实际操作时一般用javac来实现，其编译过程大致分为3个过程：</p>
-<ol>
-<li>解析和填充符号表</li>
-<li>插入式注解处理器的注解处理过程</li>
-<li>分析与字节码生成过程</li>
-</ol>
-<p>这三个步骤的关系如下：</p>
-<p><img src="/images/jvm_compile_process.png" alt="javac编译顺序"></p>
-<p>Javac编译动作入口是<code>com.sun.tools.javac.main.JavaCompiler</code>类，基本流程如下</p>
-<p><img src="/images/jvm_javac_flow.png" alt="javac"></p>
-<h2 id="解析与填充符号表"><a href="#解析与填充符号表" class="headerlink" title="解析与填充符号表"></a>解析与填充符号表</h2><h3 id="词法和语法分析"><a href="#词法和语法分析" class="headerlink" title="词法和语法分析"></a>词法和语法分析</h3><p>词法分析是将源码的字符流转变为标记（token）集合的过程，词法分析由<code>com.sun.tools.javac.parser.Scanner</code>来实现。</p>
-<p>语法分析是根据token序列构造抽象语法树（abstract syntax tree，AST），它的每个节点代表一个语法结构（construct），语法分析由<code>com.sun.tools.javac.tree.JCTree</code>来实现。之后的操作都是基于AST。</p>
-<h3 id="填充符号表"><a href="#填充符号表" class="headerlink" title="填充符号表"></a>填充符号表</h3><p>填充符号表的过程对应上图中的<code>enterTrees()</code>，符号表（symbol table）是由一组符号地址和符号信息构成的表格，在各个编译阶段都会用到：语义分析时，需要根据符号表进行语义检查（如检查一个名字的使用是否和声明一致）和产生中间代码；在目标代码生成阶段，在对符号进行地址分配时需要用到符号表。</p>
-<p>这个阶段由<code>com.sun.tools.javac.comp.Enter</code>类来实现，其出口是一个待处理列表（to do list），包含了每一个编译单元的AST顶级节点，以及package-info.java（如果有的话）的顶级节点</p>
-<h2 id="注解处理器"><a href="#注解处理器" class="headerlink" title="注解处理器"></a>注解处理器</h2><p>JDK1.5后支持了注解（annotation），可以作用于运行期；JDK1.6后提供了一组插入式注解处理器的标准API在编译期间对注解进行处理，即允许开发者对编译器的行为做一定干涉。</p>
-<p>具体可以参考<a href="https://github.com/linxiaoyang/JSR269TEST" target="_blank" rel="noopener">实践JSR269关于编译期注解的使用且搞清Lombok实现原理</a>，注意如果是自己写的话，要依赖<code>$JAVA_HOME/lib/tools.jar</code>这个包，并且由于这个步骤在编译期而非运行期，调试时需要对类似<code>javac -processor ...</code>这样的命令进行调试。</p>
-<h2 id="语义分析与字节码生成"><a href="#语义分析与字节码生成" class="headerlink" title="语义分析与字节码生成"></a>语义分析与字节码生成</h2><p>得到AST不代表源码符合逻辑，因此需要再对其进行语义检查和分析，包括标注检查和控制流分析两个步骤，分别对应图1中<code>attribute()</code>和<code>flow()</code>方法</p>
-<h3 id="标注检查"><a href="#标注检查" class="headerlink" title="标注检查"></a>标注检查</h3><p>主要检查类似变量使用前是否被声明、变量与赋值之间的数据类型是否匹配、常量折叠等。常量折叠是针对能在编译期计算出来的常量进行计算和简化，减少运行期负担。相关的类是<code>com.sun.tools.javac.comp.Attr</code>和<code>com.sun.tools.javac.comp.Check</code>。</p>
-<h3 id="数据和控制流分析"><a href="#数据和控制流分析" class="headerlink" title="数据和控制流分析"></a>数据和控制流分析</h3><p>和类加载时控制流分析类似，可以检查出诸如程序局部变量在使用前是否赋值、方法的每条路径是否都有返回值、所有异常都被处理等。还有些只能在编译期检查出来，比如一个局部变量被声明为<code>final</code>，可能编译出来的.class文件会没有相关修饰符，而编译期可以检查这个变量是否被修改过。相关的类是<code>com.sun.tools.javac.comp.Flow</code>。</p>
-<h3 id="解语法糖"><a href="#解语法糖" class="headerlink" title="解语法糖"></a>解语法糖</h3><p>语法糖（syntactic sugar）是指编程语言中增加的某些语法，它对语言功能没有影响，但更方便书写。Java的语法糖比如泛型（类型擦除）、变长参数（传个数组进去）、自动拆箱/装箱（如<code>int</code>和<code>Integer</code>转换）。这些语法糖在编译期会被还原成基础的语法结构。相关的类是<code>com.sun.tools.javac.comp.TransTypes</code>和<code>com.sun.tools.javac.comp.Lower</code>。</p>
-<h4 id="类型擦除"><a href="#类型擦除" class="headerlink" title="类型擦除"></a>类型擦除</h4><p>JDK1.5后增加了泛型，不过java是伪泛型：比如<code>ArrayList&lt;Integer&gt;</code>和<code>ArrayList&lt;String&gt;</code>在java里是同一类，而在C#里是两个不同的类，java在编译后会把具体类型替换为Object，在相关位置加入强制类型转换代码。</p>
-<p>不过类型擦除只是对Code属性中的字节码进行擦除，Signature里还有泛型信息，因此可以通过反射得到参数化类型，比如</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl;</span><br><span class="line"><span class="keyword">import</span> java.lang.reflect.Method;</span><br><span class="line"><span class="keyword">import</span> java.util.List;</span><br><span class="line"><span class="keyword">import</span> java.util.Set;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">HelloWorld</span> </span>&#123;</span><br><span class="line">  <span class="keyword">private</span> &lt;T&gt; <span class="function"><span class="keyword">void</span> <span class="title">hello</span><span class="params">(List&lt;T&gt; a, Set&lt;Integer&gt; b)</span></span>&#123;</span><br><span class="line">    a.forEach(System.out::println);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    Class cls = HelloWorld.class;</span><br><span class="line">    Method method = cls.getDeclaredMethod(<span class="string">"hello"</span>, List.class, Set.class);</span><br><span class="line">    System.out.println(((ParameterizedTypeImpl)method.getGenericParameterTypes()[<span class="number">0</span>]).getActualTypeArguments()[<span class="number">0</span>]);</span><br><span class="line">    System.out.println(((ParameterizedTypeImpl)method.getGenericParameterTypes()[<span class="number">1</span>]).getActualTypeArguments()[<span class="number">0</span>]);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// T</span></span><br><span class="line"><span class="comment">// class java.lang.Integer</span></span><br></pre></td></tr></table></figure>
-
-<h4 id="自动装箱-拆箱和遍历循环"><a href="#自动装箱-拆箱和遍历循环" class="headerlink" title="自动装箱/拆箱和遍历循环"></a>自动装箱/拆箱和遍历循环</h4><p>这些解释起来比较简单，比如这样一段代码</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;Integer&gt; list = Arrays.asList(<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>);</span><br><span class="line">    <span class="keyword">int</span> s = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">for</span> (<span class="keyword">int</span> i : list)&#123;</span><br><span class="line">      s += i;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
-
-<p>可能会被翻译为</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;Integer&gt; list = Arrays.asList(<span class="keyword">new</span> Integer[]&#123;</span><br><span class="line">        Integer.valueOf(<span class="number">1</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">2</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">3</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">4</span>)&#125;);</span><br><span class="line">    <span class="keyword">int</span> s = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">for</span> (Iterator iter = list.iterator(); iter.hasNext();)&#123;</span><br><span class="line">      <span class="keyword">int</span> i = ((Integer)iter.next()).intValue();</span><br><span class="line">      s += i;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
-
-<p>当然自动拆箱/装箱里有些坑，比如各路面试里都特别喜欢考因为类似<code>IntegerCache</code>及其上下界，导致自动装箱后的引用相同等等。简单来说由于<code>Integer</code>等类型是不可变的，也就不用担心线程安全等问题，因此可以对一些经常出现的常量（比如<code>Integer.valueOf()</code>）这种的可以进行cache，比如<code>Integer</code>里默认会对<code>[-128, 127]</code>这个范围内的数字进行cache，避免每次因为<code>Integer.valueOf()</code>创建新的对象。不过<code>new Integer()</code>总会创建新的对象。</p>
-<p>另一个坑是循环时对数组进行操作，比如</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;String&gt; list = <span class="keyword">new</span> ArrayList&lt;&gt;();</span><br><span class="line">    list.add(<span class="string">"123"</span>);</span><br><span class="line">    list.add(<span class="string">"456"</span>);</span><br><span class="line">    list.add(<span class="string">"798"</span>);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">for</span> (String s : list)&#123;</span><br><span class="line">      list.remove(s);</span><br><span class="line">      System.out.println(s);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">// 报错java.util.ConcurrentModificationException</span></span><br></pre></td></tr></table></figure>
-
-<p>解语法糖后可以看到这种删除方式会导致迭代器不可用，因此需要改为</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (Iterator&lt;String&gt; iter = list.iterator(); iter.hasNext();)&#123;</span><br><span class="line">  System.out.println(iter.next());</span><br><span class="line">  iter.remove();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<h4 id="条件编译"><a href="#条件编译" class="headerlink" title="条件编译"></a>条件编译</h4><p>Java默认如果检测到某条分支永远不会执行到，会拒绝编译，最典型的是<code>return;</code>后的语句。所以一般会用</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (<span class="keyword">true</span>)&#123;</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">&#125;</span><br><span class="line"><span class="comment">// ...</span></span><br></pre></td></tr></table></figure>
-
-<p>这样的方式来避免拒绝编译。实际上控制流分析后也会把相关代码忽略掉。</p>
-<p>另外比如内部类、枚举类、断言语句、<code>switch</code>枚举类和字符串、<code>try</code>的自动关闭资源等都是通过语法糖实现的。</p>
-<h3 id="字节码生成"><a href="#字节码生成" class="headerlink" title="字节码生成"></a>字节码生成</h3><p>字节码生成是javac编译过程的最后一个阶段，由<code>com.sun.tools.javac.jvm.Gen</code>类完成，除了将之前生成的信息转为字节码落盘外，还进行了少量代码添加和转换工作。比如把<code>&lt;cinit&gt;()</code>涉及到的语句合并在一起、将字符串加操作用<code>StringBuilder</code>或<code>StringBuffer</code>替换等。</p>
-<p>完成对语法树的遍历和调整后，会把填充了所有所需信息的符号表交给<code>com.sun.tools.javac.jvm.ClassWriter.writeClass()</code>来输出为字节码文件。至此编译结束。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
@@ -1641,7 +1635,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">23</span>
+          <span class="site-state-item-count">24</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>

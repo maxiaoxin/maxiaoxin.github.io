@@ -62,7 +62,7 @@
 <meta property="og:site_name" content="读书笔记">
 <meta property="og:description" content="之前提到，redis并没有把底层的数据结构暴露给用户，而是对用户提供string、list、set、zset、hash五种类型的object，底层采用之前提到的数据结构，它对用户理论上是透明的。这种分离机制的一个好处是可以根据具体场景进行优化，比如如果hash表非常小的时候，直接用ziplist保存键值对可能会比hashtable计算并查存会更高效，所用空间也更小。 对象的类型与编码redis使用">
 <meta property="og:locale" content="cn">
-<meta property="og:updated_time" content="2019-10-31T14:30:01.175Z">
+<meta property="og:updated_time" content="2019-11-02T06:31:14.515Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="redis学习（3）对象">
 <meta name="twitter:description" content="之前提到，redis并没有把底层的数据结构暴露给用户，而是对用户提供string、list、set、zset、hash五种类型的object，底层采用之前提到的数据结构，它对用户理论上是透明的。这种分离机制的一个好处是可以根据具体场景进行优化，比如如果hash表非常小的时候，直接用ziplist保存键值对可能会比hashtable计算并查存会更高效，所用空间也更小。 对象的类型与编码redis使用">
@@ -235,7 +235,7 @@
                   <i class="fa fa-calendar-check-o"></i>
                 </span>
                 <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-10-31 22:30:01" itemprop="dateModified" datetime="2019-10-31T22:30:01+08:00">2019-10-31</time>
+                <time title="Modified: 2019-11-02 14:31:14" itemprop="dateModified" datetime="2019-11-02T14:31:14+08:00">2019-11-02</time>
               </span>
             
           
@@ -287,7 +287,7 @@
 <h3 id="LFU（Least-Frequently-Used）"><a href="#LFU（Least-Frequently-Used）" class="headerlink" title="LFU（Least Frequently Used）"></a>LFU（Least Frequently Used）</h3><p>最近最少使用算法，即在最近一段时间内，优先淘汰使用频率最低的对象。计算频次的做法也比较好理解：每过一定时间减少固定次数。</p>
 <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUGetTimeInMinutes</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123; <span class="comment">// LRU算法下的当前时间</span></span><br><span class="line">    <span class="keyword">return</span> (server.unixtime/<span class="number">60</span>) &amp; <span class="number">65535</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUTimeElapsed</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">long</span> ldt)</span> </span>&#123; <span class="comment">// 根据object高16位计算已经过了多久</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> now = LFUGetTimeInMinutes();</span><br><span class="line">    <span class="keyword">if</span> (now &gt;= ldt) <span class="keyword">return</span> now-ldt; <span class="comment">// 和上面那个类似，计算的时候需要取模</span></span><br><span class="line">    <span class="keyword">return</span> <span class="number">65535</span>-ldt+now;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">LFUDecrAndReturn</span><span class="params">(robj *o)</span> </span>&#123; <span class="comment">// 降低访问频次并返回频次</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> ldt = o-&gt;lru &gt;&gt; <span class="number">8</span>; <span class="comment">// 高16位用来表示最近降低时间</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> counter = o-&gt;lru &amp; <span class="number">255</span>; <span class="comment">// 低8位来表示访问次数</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> num_periods = server.lfu_decay_time ? LFUTimeElapsed(ldt) / server.lfu_decay_time : <span class="number">0</span>; <span class="comment">// 衰减，假设距离上次更新过了N个周期，那么就减去N*m个统计次数</span></span><br><span class="line">    <span class="keyword">if</span> (num_periods)</span><br><span class="line">        counter = (num_periods &gt; counter) ? <span class="number">0</span> : counter - num_periods;</span><br><span class="line">    <span class="keyword">return</span> counter; <span class="comment">// 注意，最后用的时候使用255-counter作为idle（空闲）值</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">uint8_t</span> LFULogIncr(<span class="keyword">uint8_t</span> counter) &#123; <span class="comment">// 增加计数器函数，估计是考虑到counter取值范围很小，所以增加计数难度</span></span><br><span class="line">      <span class="keyword">if</span> (counter == <span class="number">255</span>) <span class="keyword">return</span> <span class="number">255</span>;</span><br><span class="line">      <span class="keyword">double</span> r = (<span class="keyword">double</span>)rand()/RAND_MAX;</span><br><span class="line">      <span class="keyword">double</span> baseval = counter - LFU_INIT_VAL; <span class="comment">// 注意初始会给一个object设置访问频次为5，避免一个object被创建后立刻删除</span></span><br><span class="line">      <span class="keyword">if</span> (baseval &lt; <span class="number">0</span>) baseval = <span class="number">0</span>;</span><br><span class="line">      <span class="keyword">double</span> p = <span class="number">1.0</span>/(baseval*server.lfu_log_factor+<span class="number">1</span>); </span><br><span class="line">      <span class="keyword">if</span> (r &lt; p) counter++; <span class="comment">// 看看有没有通过测试</span></span><br><span class="line">      <span class="keyword">return</span> counter;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
 
-<h3 id="TTL（Time-to-Live）"><a href="#TTL（Time-to-Live）" class="headerlink" title="TTL（Time to Live）"></a>TTL（Time to Live）</h3><p>剩余生存时间，即淘汰超过存活时间的对象。这个算法就比较简单了：<code>idle = ULLONG_MAX - (long)dictGetVal(de);</code>。看起来是直接把de的值的指针拿出来计算，没搞懂为什么可以这么来。</p>
+<h3 id="TTL（Time-to-Live）"><a href="#TTL（Time-to-Live）" class="headerlink" title="TTL（Time to Live）"></a>TTL（Time to Live）</h3><p>剩余生存时间，即淘汰超过存活时间的对象。这个算法就比较简单了：<code>idle = ULLONG_MAX - (long)dictGetVal(de);</code>，其中de指向expire字典里的entry，其value是以long形式存的过期时间限制。</p>
 
     </div>
 
@@ -322,6 +322,10 @@
             <span class="post-nav-divider"></span>
 
             <div class="post-nav-prev post-nav-item">
+              
+                <a href="/2019/11/02/redis-read4/" rel="prev" title="redis学习（4）数据库">
+                  redis学习（4）数据库 <i class="fa fa-chevron-right"></i>
+                </a>
               
             </div>
           </div>
@@ -385,7 +389,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">23</span>
+          <span class="site-state-item-count">24</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
