@@ -191,6 +191,163 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/18/jvm8/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/09/18/jvm8/" class="post-title-link" itemprop="url">JVM学习（8）运行期优化</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-18 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-18T00:00:00+08:00">2019-09-18</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-17 19:32:57" itemprop="dateModified" datetime="2019-09-17T19:32:57+08:00">2019-09-17</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>在HotSpot中，java程序最初通过解释器（Interpreter）进行解释执行的，当JVM发现某个方法或代码块运行特别频繁时，就会认为这段代码是热点代码（hot spot code），为提高这部分代码的执行效率，运行时会把其编译为本地平台相关代码，并进行各种层次的优化，完成这个任务的编译器被称为即时编译器（just in time compiler, JIT）。尽管JVM规范并没有要求一定要实现JIT，但一般主流JVM都会做，否则效率太低。</p>
+<h2 id="编译时机"><a href="#编译时机" class="headerlink" title="编译时机"></a>编译时机</h2><p><img src="/images/jvm_interpreter_and_compiler.png" alt="解释器和编译器"></p>
+<p>如上图所示，主流编译器一般都有解释器和编译器。解释器的优势是能够省去编译过程，立即执行代码；而在运行稳定后，将代码编译为本地代码能够提高执行效率，当然这样也会占用更多内存。此外，当编译器选择激进优化时，如果激进优化假设不成立，那么解释器可以作为“逃生门”，通过逆优化（deoptimization）退回到解释状态继续执行（或者不激进优化的C1编译器）。</p>
+<p>HotSpot内置了两个JIT，分别是Client Compiler（C1）和Server Compiler （C2），一般默认采用一个编译器和解释器直接配合的工作方式，用哪种编译器取决于JVM运行模式，HotSpot会根据硬件性能和自身版本选择运行模式，用户也可以通过参数指定模式。解释器和编译器搭配使用的方式被称为混合模式（mix mode），只使用其中某一个分别被称为解释模式（interpreted mode）和编译模式（compiled mode），可以通过<code>-Xint</code>和<code>-Xcomp</code>来选择。</p>
+<p>编译成本地代码本来就需要时间，优化程度越高时间越长，且有时候可以通过监控运行时信息来进行优化，时间就会更长。因此HotSpot会启用分层编译（tiered compilation）策略，JDK1.7的server模式将其作为默认策略。分层编译根据编译器编译、优化的规模和耗时，划分出不同的编译层次，包括</p>
+<ul>
+<li>第0层，解释执行，不开启性能监控功能（profiling），可触发第一层编译</li>
+<li>第1层，也称C1编译，将字节码编译为本地代码，进行简单、可靠的优化，如果有必要将加入性能监控逻辑</li>
+<li>第2层（或2层以上），也称C2编译，也是将字节码编译为本地代码，但会启用一些耗时较长的优化策略，甚至会根据性能监控信息进行一些不可靠的激进优化</li>
+</ul>
+<p>分层编译开启后，client compiler和server compiler会同时工作，许多代码会被多次编译。</p>
+<h3 id="编译对象和触发条件"><a href="#编译对象和触发条件" class="headerlink" title="编译对象和触发条件"></a>编译对象和触发条件</h3><p>热点代码包括两类：</p>
+<ul>
+<li>被多次调用的方法</li>
+<li>被多次执行的循环体</li>
+</ul>
+<p>无论哪种情况，编译器都会选择将整个包含热点的方法作为编译对象，而第二种情况因为编译过程发生在方法执行中，因此被称为栈上替换（on stack replacement, OSR编译）。那么问题就在于如何探测一个方法/循环被执行多少次，以及多少次算热点。探测执行次数的方式有两种：</p>
+<ul>
+<li>基于采样的热点探测（Sample Based Hot Spot Detection）：周期性的检查各个线程的栈顶，如果某个方法经常出现，那么它就是热点方法。好处是简单高效，且容易获得调用结构，缺点是容易受到线程阻塞或者别的外界因素干扰。</li>
+<li>基于计数器的热点探测（Counter Based Hot Spot Detection）：为每个方法/代码块建立和维护计数器，执行次数超过某个值就认为是热点方法。好处是更加准确，缺点是拿不到调用关系而且比较麻烦</li>
+</ul>
+<p>HotSpot采用第二种方式，且为每个方法准备了两个计数器：方法调用计数器（Invocation Counter）和回边计数器（Back Edge Counter），两个计数器都有一个确定的阈值，超过阈值后会触发JIT编译。方法调用计数器容易理解，用于记录被调用了多少次，client模式下阈值是1500，server模式下阈值是10000，也可以通过<code>-XX:CompileThreshold</code>设置：更准确的说是频次，即一定时间内的调用次数。如果超过一定时间，那么计数器会减半，这一过程被称为方法调用计数器的热度衰减（Counter Decay），相对应的时间被称为此方法统计的半衰期（Counter Half Life Time），也可以通过参数关闭热度衰减或设置半衰期时间。方法在执行时，会优先选择已被编译好的本地代码版本，如果没有优化好的版本且满足优化条件则会提交一个编译请求，等编译完成后，这个方法的入口地址就会被系统自动改写成新的。</p>
+<p><img src="/images/jvm_invocation_counter_workflow.png" alt="方法调用计数器触发即时编译"></p>
+<p>回边计数器用来统计一个方法中的循环体代码执行的次数，在字节码遇到控制流向后跳转的指令被称为回边（Back Edge），显然出现回边意味着存在循环。和方法调用计数器不同，回边计数器的阈值通过方法调用计数器阈值（CompileThreshold）、OSR比率（OnStackReplacePercentage）和解释器监控比率（InterpreterProfilePercentage）决定，计算方式为：</p>
+<ul>
+<li>Client模式下：<code>$CompileThreshold*$OnStackReplacePercentage/100</code>，全取默认值是13995</li>
+<li>Server模式下：<code>$CompileThreshold*($OnStackReplacePercentage-$InterpreterProfilePercentage)/100</code>，全取默认值是10700</li>
+</ul>
+<p>解释器遇到回边指令时，会先查找有没有已经编译好的版本，有的话执行编译后的版本，没有则增加回边计数器，超过阈值时会提交一个OSR编译请求，并降低一些回边计数器的值，以便在循环中等待执行，如下图所示。</p>
+<p><img src="/images/jvm_back_edge_counter_workflow.png" alt="回边计数器触发即时编译"></p>
+<p>回边计数器没有热衰过程，记录的是绝对运行次数。但无论是哪种编译方式，JVM都默认编译过程可以和解释执行并行执行。用户也可以用<code>-XX:-BackgroundCompilation</code>禁止后台编译，这种情况下达到JIT条件时，用户线程会等待直到编译完成。</p>
+<h2 id="编译过程"><a href="#编译过程" class="headerlink" title="编译过程"></a>编译过程</h2><h3 id="C1编译器"><a href="#C1编译器" class="headerlink" title="C1编译器"></a>C1编译器</h3><p>C1是一个简单快速的三段式编译器，主要关注局部性优化，放弃了许多耗时较长的全局优化手段。</p>
+<ol>
+<li>一个平台独立的前端会将字节码构造成一种高级中间代码表示（High-Level Intermediate Representation，HIR）。HIR使用静态单分配（Static Single Assignment，SSA）的形式来代表代码值，使得一些在HIR的构造过程中和之后进行的优化动作更容易实现。在此之前编译器会在字节码的基础上完成一部分基础优化，如方法内联、常量传播等。</li>
+<li>一个平台相关的后端会从HIR中产生低级中间代码表示方法（Low-Level Intermediate Representation，LIR），在这一步之前会完成另外一些优化，如空值检查消除、范围检查消除等，让HIR达到更高效的代码表达形式</li>
+<li>一个平台相关的后端使用线性扫描算法（Linear Scan Register Allocation）在LIR上分配寄存器，并在LIR上做窥孔优化（Peephole optimization，一种局部的汇编指令优化手段，类似删除冗余的<code>store</code>和<code>load</code>、用左移指令代替乘2指令等，参考<a href="https://blog.csdn.net/liumf2005/article/details/8858102" target="_blank" rel="noopener">窥孔优化 peephole optimization</a>），然后产生机器代码。C1编译过程大致如下图所示。</li>
+</ol>
+<p><img src="/images/jvm_c1_compiler.png" alt="C1编译器架构"></p>
+<h3 id="C2编译器"><a href="#C2编译器" class="headerlink" title="C2编译器"></a>C2编译器</h3><p>C2是专门面向服务端的典型应用并为服务端的性能配置特别调整过的编译器，也是一个充分优化过的高级编译器，几乎能达到GNU C++编译器使用-O2参数时的优化强度，它会执行所有经典的优化动作，以及一些和java语言特性密切相关的优化技术</p>
+<p>C2编译器的寄存器分配器是一个全局图着色分配器，可以充分利用某些处理器架构（如RISC）上的大部分寄存器集合。总的来说，C2的优化效果更好，但耗时更高。</p>
+<h2 id="编译优化技术"><a href="#编译优化技术" class="headerlink" title="编译优化技术"></a>编译优化技术</h2><p>这里介绍一些常见的优化技术</p>
+<h3 id="冗余访问消除（Redundant-Loads-Elimination）"><a href="#冗余访问消除（Redundant-Loads-Elimination）" class="headerlink" title="冗余访问消除（Redundant Loads Elimination）"></a>冗余访问消除（Redundant Loads Elimination）</h3><p>将类似<code>a = foo.a; b = foo.a</code>优化为<code>a = foo.a;b=a;</code>来减少访问，类似公共子表达式消除</p>
+<h3 id="常量传播（Constant-Propagation）"><a href="#常量传播（Constant-Propagation）" class="headerlink" title="常量传播（Constant Propagation）"></a>常量传播（Constant Propagation）</h3><p>在编译时将能够计算出结果的变量直接替换成常量</p>
+<h3 id="复写传播（Copy-Propagation）"><a href="#复写传播（Copy-Propagation）" class="headerlink" title="复写传播（Copy Propagation）"></a>复写传播（Copy Propagation）</h3><p>如果某个局部变量完全等价于另一个变量，那么就可以用另一个变量来替换，例如将<code>a = foo.a; b = a; s = a+b</code>可以优化为<code>a = foo.a; s = a+a</code></p>
+<h3 id="无用代码消除（Dead-Code-Elimination）"><a href="#无用代码消除（Dead-Code-Elimination）" class="headerlink" title="无用代码消除（Dead Code Elimination）"></a>无用代码消除（Dead Code Elimination）</h3><p>移除对程序运行结果没有任何影响的代码，包括不会运行到的代码和只会影响到无关程序运行结果的变量（Dead Variables），比如空循环</p>
+<h3 id="公共子表达式消除"><a href="#公共子表达式消除" class="headerlink" title="公共子表达式消除"></a>公共子表达式消除</h3><p>如果一个表达式E已经被计算了，且从开始计算到现在E中所有变量的值都没有发生变化，那么可以复用这个表达式计算结果</p>
+<p>此外还可以进行代数简化，比如将<code>d = E * 12 + a + (a + E)</code>变化为<code>d = E * 13 + a * 2</code></p>
+<h3 id="循环展开（Loop-Unrolling）"><a href="#循环展开（Loop-Unrolling）" class="headerlink" title="循环展开（Loop Unrolling）"></a>循环展开（Loop Unrolling）</h3><p>增大循环步伐和循环体长度，减少总的循环次数，这样有利于指令并行执行</p>
+<h3 id="循环表达式外提（Loop-Expression-Hoisting）"><a href="#循环表达式外提（Loop-Expression-Hoisting）" class="headerlink" title="循环表达式外提（Loop Expression Hoisting）"></a>循环表达式外提（Loop Expression Hoisting）</h3><p>将循环中每次计算结果不变的表达式放在循环前提前计算，从而减少每次循环的计算量</p>
+<h3 id="基本块重排序（Basic-Block-Reordering）"><a href="#基本块重排序（Basic-Block-Reordering）" class="headerlink" title="基本块重排序（Basic Block Reordering）"></a>基本块重排序（Basic Block Reordering）</h3><p>通过重排指令提高cache命中率、利用cpu流水线、cpu预读等方式加快运行</p>
+<h3 id="范围检查消除（Range-Check-Elimination）"><a href="#范围检查消除（Range-Check-Elimination）" class="headerlink" title="范围检查消除（Range Check Elimination）"></a>范围检查消除（Range Check Elimination）</h3><p>去掉一定不会越界的数组越界检查</p>
+<p>此外java还有很多安全检查，比如空值检查、空指针检查、除零检查等，实际上有时候一段代码不见得就安全，但可以认为出错概率很低，因此可以通过增加隐式异常处理来避免安全检查，比如</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (foo != <span class="keyword">null</span>)&#123;</span><br><span class="line">    <span class="keyword">return</span> foo.value;</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="keyword">throw</span> <span class="keyword">new</span> NullPointerException();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以改写为</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">    <span class="keyword">return</span> foo.value;</span><br><span class="line">&#125; <span class="keyword">catch</span> (segment_fault)&#123;</span><br><span class="line">    uncommon_trap();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>即JVM会注册一个Segment Fault信号的异常处理器（对应<code>uncommon_trap()</code>）来进行异常处理，代价是如果发生异常，需要从用户态转到内核态中处理再回到用户态，速度远比一次判空检查慢。</p>
+<p>显然如果<code>foo</code>经常为空的话，这种优化会让程序更慢，所以HotSpot会收集运行期信息来选择最佳方案。</p>
+<p>类似还有自动装箱消除（Autobox Elimination）、安全点消除（Safepoint Elimination）、反射消除（Dereflection）等都可以通过隐式异常处理进行优化。</p>
+<h3 id="分支频率预测（Branch-Frequency-Prediction）"><a href="#分支频率预测（Branch-Frequency-Prediction）" class="headerlink" title="分支频率预测（Branch Frequency Prediction）"></a>分支频率预测（Branch Frequency Prediction）</h3><p>激进优化，预先执行极有可能被选择的分支，提高流水线效率</p>
+<h3 id="内联（Method-inlining）"><a href="#内联（Method-inlining）" class="headerlink" title="内联（Method inlining）"></a>内联（Method inlining）</h3><p>方法内联很容易理解：将不会被复写的方法代码“copy”到调用点，这样减少方法调用成本（如建立栈帧等），且能够为其他优化建立良好的基础。</p>
+<p>由<code>invokevirtual</code>指令调用的非<code>final</code>方法原则上无法内联，原因在于运行期间无法确定这个方法是否被复写过。但其实很多方法只有一个版本，那么可以想办法对这种方法进行内联，比如</p>
+<ol>
+<li>类型继承关系分析（Class Hierarchy Analysis，CHA）：分析所有已加载的类的继承关系，确定某些方法是否多余一种的实现，如果没有则可以内联</li>
+<li>内联缓存（Inline Cache）：在调用时记录内联方法的版本并缓存相关代码，如果之后的访问命中缓存则可以继续执行内联，否则进行正常调用</li>
+</ol>
+<p>多数情况下内联是一种激进的优化策略，如果内联失败时需要有一个备用方案，需要预留一个逃生门，这种内联被称为守护内联（Guarded Inlining）。</p>
+<h3 id="逃逸分析（Escape-Analysis）"><a href="#逃逸分析（Escape-Analysis）" class="headerlink" title="逃逸分析（Escape Analysis）"></a>逃逸分析（Escape Analysis）</h3><p>即分析对象动态作用域，比如一个对象在某个方法中被定义后，如果能够被其他方法引用，则称为方法逃逸；如果某个线程定义的对象被其他线程引用到，则称为线程逃逸。显然，如果能够分析出一个对象不会逃逸出某个范围，那么就可以针对这一特性进行优化，比如：</p>
+<ol>
+<li>栈上分配（Stack Allocation）：如果确定一个变量不会逃逸出方法之外，那么就可以在栈上分配这个对象，提高分配/回收效率，避免GC过程</li>
+<li>同步消除（Synchronization Elimination）：如果确定一个变量不会逃逸出线程，那么这个变量的读写就不会有竞争，可以取消对这个变量的同步过程</li>
+<li>标量替换（Scalar Replacement）：如果一个对象不会被外部访问，且可以拆分，那么不创建这个对象，而改为创建它的若干个被引用到的变量。标量替换后还可以提高分配和读写效率（栈上分配）外，还可以进一步被其他优化手段优化（比如复写传播等）</li>
+</ol>
+<p>JDK1.8默认开启逃逸分析，也可以通过<code>-XX:-DoEscapeAnalysis</code>关闭</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/16/jvm7/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1674,105 +1831,6 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/java-dynamic-proxy/" class="post-title-link" itemprop="url">Java动态代理笔记</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:46:34" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。</p>
-<p>代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。</p>
-<p>在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实现细节和副作用。常见的使用代理的场合有：</p>
-<ol>
-<li>远程代理（Remote Proxy）：将一个远程对象包装成本地对象。WIKI的例子是ATM，ATM保存了银行信息，用户访问ATM等同于访问银行。</li>
-<li>虚拟代理（Virtual Proxy）：对象可以不实际存在，只有当访问时才会真正生成（也可以实现一部分）。参考延迟加载。</li>
-<li>保护代理（Protection Proxy）：在实际调用前/中/后进行资源安全性的检查。</li>
-<li>Copy-on-Write代理：虚拟代理的一种。把复制（克隆）拖延到只有在客户端需要时，才真正采取行动。</li>
-<li>Cache代理：为某一个目标操作的结果提供临时的存储空间，以便多个客户端可以共享这些结果。</li>
-<li>防火墙（Firewall）代理：保护目标，不让恶意用户接近。</li>
-<li>同步化（Synchronization）代理：使几个用户能够同时使用一个对象而没有冲突。</li>
-<li>智能引用（Smart Reference）代理：当一个对象被引用时，提供一些额外的操作，比如将对此对象调用的次数记录下来等。</li>
-</ol>
-<p>组合/继承都可以实现代理模式，当然静态代理在JAVA里使用继承会简单一些。即A’继承A，在每个父方法调用前后做一些操作。</p>
-<p>JAVA也支持动态代理，按我理解应该是组合模式。对于真实对象object，需要实现一个InvocationHandler接口，再通过Proxy.newProxyInstance(classLoader,interfaces,handler)来创建代理对象。</p>
-<ol>
-<li>classLoader: 生成的代理类所在的classLoader。（下次学习一下classLoader）。</li>
-<li>interfaces：想要代理的接口的集合。</li>
-<li>handler：我们刚才创建的handler，使用它来实际调用object，并做一些其他操作。</li>
-</ol>
-<p>第二个参数interfaces很重要，JAVA动态代理会动态创建一个类似<code>com.sun.proxy.$Proxy0</code>的类，这个类实现了所有的interfaces。在继承关系比较复杂的情况下，个人建议写死会比较好，使用object.getClass().getInterfaces()会出现一些意想不到的情况。比如有接口I1,I2,I3,C1实现了I1,I2，C2继承了C1，且实现了I3，那么一个C2的实例c2.getClass().getInterfaces()返回结果只有I3，无法代理I1和I2。</p>
-<p>在实现InvocationHandler接口时，我们需要实现invoke(proxy, method, args)方法，其中可能会调用method.invode(object,args)，当object因为某些原因报错时，method.invode会抛出InvocationTargetException异常：这与所预想抛出的异常不一致，从而导致上层调用者捕捉不到对应的异常。因此最好写成</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
@@ -1822,7 +1880,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">24</span>
+          <span class="site-state-item-count">25</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>

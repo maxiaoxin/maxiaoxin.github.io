@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="对于单机数据库而言，持久化的思路大致分两种，一种是把当前状态（主要是数据，更具体的说是KV对）全部打包保存起来，恢复的时候直接装填；另一种是把所有写操作记录下来，恢复的时候回放这些操作。这两种思路分别对应于redis的RDB文件和AOF文件。 RDB持久化可以认为RDB是一种全量备份，其中RDB持久化的方式大致有两种，一种是服务器阻塞并备份，直至结束后再继续服务（SAVE、FLUSHALL命令）；">
+<meta name="keywords" content="redis">
+<meta property="og:type" content="article">
+<meta property="og:title" content="redis学习（5）持久化">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/11/05/redis-read5/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="对于单机数据库而言，持久化的思路大致分两种，一种是把当前状态（主要是数据，更具体的说是KV对）全部打包保存起来，恢复的时候直接装填；另一种是把所有写操作记录下来，恢复的时候回放这些操作。这两种思路分别对应于redis的RDB文件和AOF文件。 RDB持久化可以认为RDB是一种全量备份，其中RDB持久化的方式大致有两种，一种是服务器阻塞并备份，直至结束后再继续服务（SAVE、FLUSHALL命令）；">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-11-06T13:11:51.172Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="redis学习（5）持久化">
+<meta name="twitter:description" content="对于单机数据库而言，持久化的思路大致分两种，一种是把当前状态（主要是数据，更具体的说是KV对）全部打包保存起来，恢复的时候直接装填；另一种是把所有写操作记录下来，恢复的时候回放这些操作。这两种思路分别对应于redis的RDB文件和AOF文件。 RDB持久化可以认为RDB是一种全量备份，其中RDB持久化的方式大致有两种，一种是服务器阻塞并备份，直至结束后再继续服务（SAVE、FLUSHALL命令）；">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/11/05/redis-read5/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>redis学习（5）持久化 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/05/redis-read5/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">redis学习（5）持久化
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-11-05 00:00:00" itemprop="dateCreated datePublished" datetime="2019-11-05T00:00:00+08:00">2019-11-05</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-11-06 21:11:51" itemprop="dateModified" datetime="2019-11-06T21:11:51+08:00">2019-11-06</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>对于单机数据库而言，持久化的思路大致分两种，一种是把当前状态（主要是数据，更具体的说是KV对）全部打包保存起来，恢复的时候直接装填；另一种是把所有写操作记录下来，恢复的时候回放这些操作。这两种思路分别对应于redis的RDB文件和AOF文件。</p>
+<h2 id="RDB持久化"><a href="#RDB持久化" class="headerlink" title="RDB持久化"></a>RDB持久化</h2><p>可以认为RDB是一种全量备份，其中RDB持久化的方式大致有两种，一种是服务器阻塞并备份，直至结束后再继续服务（<code>SAVE</code>、<code>FLUSHALL</code>命令）；另一种是fork一个子进程，由子进程去进行备份，子进程备份期间禁止再次启动子备份进程（<code>BGSAVE</code>或定时事件）。fork的一个好处是相当于对内存空间进行了快照操作，子线程访问到的数据都是某一时刻“正确的”数据，也就是这一时刻redis数据库的快照。无论哪种，最终调用的都是<code>rdbSave()</code>函数。</p>
+<p>可以在redis服务器设置自动备份条件，保存在<code>redisServer-&gt;saveparams</code>里，主要条件有两个：时间间隔和操作次数。时间间隔很容易理解，操作次数则保存在<code>redisServer-&gt;dirty</code>，所有写操作都会增加<code>dirty</code>次数。因此在定时任务<code>serverCron()</code>里会检查各个条件是否已满足，满足则执行<code>rdbSaveBackground()</code></p>
+<p><code>rdbSave()</code>是先创建一个临时文件，成功写入后再重命名为指定filename，核心的写操作是由<code>rdbSaveRio()</code>完成的，大致包括以下步骤：</p>
+<ol>
+<li>写入REDIS魔数和版本号</li>
+<li>调用<code>rdbSaveInfoAuxFields()</code>保存redis辅助信息（AUX）</li>
+<li>调用<code>rdbSaveModulesAux()</code>保存各个模块的AUX</li>
+<li>遍历各个database，保存其id、object数、失效object数等，并遍历其键空间，获得每个object信息并保存</li>
+<li>保存object时，如果开启RDB-AOF混合开关会从父进程读增量数据，这个地方没看懂</li>
+<li>遍历并保存lua脚本</li>
+<li>写入结束时的一些AUX和校验和</li>
+</ol>
+<p>在保存每个object时，还需要写入这个object的过期信息、LRU（如果开启相应开关）、LFU（如果开启相应开关）、type和具体数据。这部分代码比较复杂，总的来说大致流程是先按某种规则转换为数字/字符串，如果开启压缩则对字符串进行压缩，再写入文件。比如有序集合：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (o-&gt;encoding == OBJ_ENCODING_ZIPLIST) &#123; <span class="comment">// 如果有序集合采用ziplist实现</span></span><br><span class="line">    <span class="keyword">size_t</span> l = ziplistBlobLen((<span class="keyword">unsigned</span> <span class="keyword">char</span>*)o-&gt;ptr);  <span class="comment">// 拿到ziplist长度</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> ((n = rdbSaveRawString(rdb,o-&gt;ptr,l)) == <span class="number">-1</span>) <span class="keyword">return</span> <span class="number">-1</span>; <span class="comment">// 以裸字符串信息写入文件</span></span><br><span class="line">        nwritten += n;</span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (o-&gt;encoding == OBJ_ENCODING_SKIPLIST) &#123; <span class="comment">// 如果以skiplist实现</span></span><br><span class="line">        zset *zs = o-&gt;ptr;</span><br><span class="line">        zskiplist *zsl = zs-&gt;zsl;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> ((n = rdbSaveLen(rdb,zsl-&gt;length)) == <span class="number">-1</span>) <span class="keyword">return</span> <span class="number">-1</span>; <span class="comment">// 那么先保存总长度</span></span><br><span class="line">        nwritten += n;</span><br><span class="line"></span><br><span class="line">        zskiplistNode *zn = zsl-&gt;tail; <span class="comment">// 从尾节点开始遍历</span></span><br><span class="line">        <span class="keyword">while</span> (zn != <span class="literal">NULL</span>) &#123;</span><br><span class="line">        <span class="keyword">if</span> ((n = rdbSaveRawString(rdb, <span class="comment">// 以裸字符串形式保存这个节点的值</span></span><br><span class="line">            (<span class="keyword">unsigned</span> <span class="keyword">char</span>*)zn-&gt;ele,sdslen(zn-&gt;ele))) == <span class="number">-1</span>)</span><br><span class="line">        &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        nwritten += n;</span><br><span class="line">        <span class="keyword">if</span> ((n = rdbSaveBinaryDoubleValue(rdb,zn-&gt;score)) == <span class="number">-1</span>) <span class="comment">// 以double形式保存这个节点的score</span></span><br><span class="line">            <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line">        nwritten += n;</span><br><span class="line">        zn = zn-&gt;backward; <span class="comment">// 向前走</span></span><br><span class="line">    &#125;</span><br><span class="line">&#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    serverPanic(<span class="string">"Unknown sorted set encoding"</span>);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>尽管可以fork一个子进程来备份，但载入RDB文件还是必须得阻塞执行。无论是RDB还是AOF，文件写完后都会调用<code>_exit()</code>，这个函数会给它的父进程发一个<code>SIGCHLD</code>信号，父进程接受到这个信号会做一些扫尾操作，比如<code>dirty、lastsave、lastbgsave_status</code>之类的，定义在<code>backgroundSaveDoneHandler()</code>里</p>
+<h2 id="AOF持久化"><a href="#AOF持久化" class="headerlink" title="AOF持久化"></a>AOF持久化</h2><p>AOF的思路和HBase的WAL类似，都是通过记录写操作来持久化的。假如一开始数据为空，那么记录所有写操作当然可以重放出当前状态。但如果写AOF时数据不为空，且丢失了之前的写操作记录，那么就需要把存量数据先转换为写操作再记录下来。</p>
+<p>在打开AOF持久化功能时，客户端每发送一条命令，如果造成数据变动（<code>server-&gt;dirty</code>发生变化），那么就会调用<code>propagate()</code>函数来把写操作写入AOF并传播到从节点。写入AOF调用的是<code>feedAppendOnlyFile()</code>函数，基本上是将命令还原为等价的redis命令字符串再写入。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">feedAppendOnlyFile</span><span class="params">(struct redisCommand *cmd, <span class="keyword">int</span> dictid, robj **argv, <span class="keyword">int</span> argc)</span> </span>&#123; <span class="comment">// 将命令写入AOF文件</span></span><br><span class="line">    sds buf = sdsempty();</span><br><span class="line">    robj *tmpargv[<span class="number">3</span>];</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (dictid != server.aof_selected_db) &#123; <span class="comment">// 需要额外加一条select命令</span></span><br><span class="line">        <span class="keyword">char</span> seldb[<span class="number">64</span>];</span><br><span class="line"></span><br><span class="line">        <span class="built_in">snprintf</span>(seldb,<span class="keyword">sizeof</span>(seldb),<span class="string">"%d"</span>,dictid); <span class="comment">// snprintf是一个相对安全的格式化输出函数，第二个参数表示缓冲区最大长度</span></span><br><span class="line">        buf = sdscatprintf(buf,<span class="string">"*2\r\n$6\r\nSELECT\r\n$%lu\r\n%s\r\n"</span>, <span class="comment">// 将select命令写入buf</span></span><br><span class="line">            (<span class="keyword">unsigned</span> <span class="keyword">long</span>)<span class="built_in">strlen</span>(seldb),seldb);</span><br><span class="line">        server.aof_selected_db = dictid; <span class="comment">// 重置AOF正在使用的database id</span></span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (cmd-&gt;proc == expireCommand || cmd-&gt;proc == pexpireCommand || <span class="comment">// 过期命令</span></span><br><span class="line">        cmd-&gt;proc == expireatCommand) &#123;</span><br><span class="line">        buf = catAppendOnlyExpireAtCommand(buf,cmd,argv[<span class="number">1</span>],argv[<span class="number">2</span>]); <span class="comment">// 这个函数会将过期命令统一转换为PEXPIREAT</span></span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (cmd-&gt;proc == setexCommand || cmd-&gt;proc == psetexCommand) &#123; <span class="comment">// 对于setex和setexp命令</span></span><br><span class="line">        tmpargv[<span class="number">0</span>] = createStringObject(<span class="string">"SET"</span>,<span class="number">3</span>);</span><br><span class="line">        tmpargv[<span class="number">1</span>] = argv[<span class="number">1</span>];</span><br><span class="line">        tmpargv[<span class="number">2</span>] = argv[<span class="number">3</span>];</span><br><span class="line">        buf = catAppendOnlyGenericCommand(buf,<span class="number">3</span>,tmpargv); <span class="comment">// 会转换为一个写入命令</span></span><br><span class="line">        decrRefCount(tmpargv[<span class="number">0</span>]);</span><br><span class="line">        buf = catAppendOnlyExpireAtCommand(buf,cmd,argv[<span class="number">1</span>],argv[<span class="number">2</span>]); <span class="comment">// 和一个过期命令</span></span><br><span class="line">    &#125; <span class="keyword">else</span> <span class="keyword">if</span> (cmd-&gt;proc == setCommand &amp;&amp; argc &gt; <span class="number">3</span>) &#123; <span class="comment">// 类似的，set命令也可能包含过期信息</span></span><br><span class="line">        <span class="keyword">int</span> i;</span><br><span class="line">        robj *exarg = <span class="literal">NULL</span>, *pxarg = <span class="literal">NULL</span>;</span><br><span class="line">        buf = catAppendOnlyGenericCommand(buf,<span class="number">3</span>,argv); <span class="comment">// 先添加一个写命令</span></span><br><span class="line">        <span class="keyword">for</span> (i = <span class="number">3</span>; i &lt; argc; i ++) &#123; <span class="comment">// 因此需要取出过期参数</span></span><br><span class="line">            <span class="keyword">if</span> (!strcasecmp(argv[i]-&gt;ptr, <span class="string">"ex"</span>)) exarg = argv[i+<span class="number">1</span>];</span><br><span class="line">            <span class="keyword">if</span> (!strcasecmp(argv[i]-&gt;ptr, <span class="string">"px"</span>)) pxarg = argv[i+<span class="number">1</span>];</span><br><span class="line">        &#125;</span><br><span class="line">        serverAssert(!(exarg &amp;&amp; pxarg));</span><br><span class="line">        <span class="keyword">if</span> (exarg) <span class="comment">// 然后写入过期命令</span></span><br><span class="line">            buf = catAppendOnlyExpireAtCommand(buf,server.expireCommand,argv[<span class="number">1</span>],</span><br><span class="line">                                               exarg);</span><br><span class="line">        <span class="keyword">if</span> (pxarg)</span><br><span class="line">            buf = catAppendOnlyExpireAtCommand(buf,server.pexpireCommand,argv[<span class="number">1</span>],</span><br><span class="line">                                               pxarg);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123; <span class="comment">// 其他命令直接写入即可</span></span><br><span class="line">        buf = catAppendOnlyGenericCommand(buf,argc,argv);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (server.aof_state == AOF_ON) <span class="comment">// 如果开启AOF，则将buf写入server.aof_buf</span></span><br><span class="line">        server.aof_buf = sdscatlen(server.aof_buf,buf,sdslen(buf));</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (server.aof_child_pid != <span class="number">-1</span>) <span class="comment">// 如果有后台子进程在运行，那么需要把这些新增的信息加进去</span></span><br><span class="line">        aofRewriteBufferAppend((<span class="keyword">unsigned</span> <span class="keyword">char</span>*)buf,sdslen(buf));</span><br><span class="line"></span><br><span class="line">    sdsfree(buf);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以看到实际上这个写操作只是将数据写入<code>server.aof_buf</code>，最后会统一通过<code>flushAppendOnlyFile()</code>落盘，其频率可以是<code>always</code>、<code>everysec</code>、或<code>no</code>。</p>
+<p>当然这种记录写操作的一个缺点是日志可能越来越大，回放也会越来越慢，因此需要AOF重写，即丢弃之前的记录，从当前状态开始，将数据转换为等价的写操作并保存，对应的命令就是<code>BGREWRITEAOF</code>。同样的，重写结束后主进程会调用<code>backgroundRewriteDoneHandler()</code>做一些扫尾工作，比如把重写期间新产生的写操作添加进AOF文件里。另外解析出来的命令如果操作数太多，会将其分成多个命令，避免客户端缓冲区溢出。</p>
+<p>一个自然而然的想法是，存量数据用RDB存，增量数据用AOF存。事实上redis4.0后增加了RDB-AOF混合持久化，持久化的文件前半段是RDB格式，后半段是AOF格式。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/redis/" rel="tag"># redis</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/11/02/redis-read4/" rel="next" title="redis学习（4）数据库">
+                  <i class="fa fa-chevron-left"></i> redis学习（4）数据库
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#RDB持久化"><span class="nav-number">1.</span> <span class="nav-text">RDB持久化</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#AOF持久化"><span class="nav-number">2.</span> <span class="nav-text">AOF持久化</span></a></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">25</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">27</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
