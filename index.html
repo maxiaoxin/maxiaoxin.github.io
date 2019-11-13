@@ -191,6 +191,193 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/12/hbase-buckload/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/11/12/hbase-buckload/" class="post-title-link" itemprop="url">HBase BulkLoad简单用法</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-11-12 00:00:00 / Modified: 15:42:23" itemprop="dateCreated datePublished" datetime="2019-11-12T00:00:00+08:00">2019-11-12</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>最近发现BulkLoad这个好东西，记录一下</p>
+<p>简单来说，正常的HBase写操作需要先经过Region Server，再通过一系列复杂操作后才会生成HFile并落盘（比如写WAL、flush、split等），进而生效。由于hbase的一个具体的region server是单点的，如果某个作业的写入量较大，很可能会把region server打爆。而我们知道，HBase持久化是通过HFile保存的，那么反过来，如果把写操作聚合成为一个HFile，再让hbase去加载这个hfile，那么就完成了写入操作，这样做可以省下大量的region server操作，降低负载，这个操作称为bulkload。</p>
+<p>Bulkload大致步骤包括：</p>
+<ol>
+<li>生成要处理的数据。至于如何生成、生成什么格式得看具体场景，但无论如何，需要能被接下来的mapreduce作业访问到</li>
+<li>提交一个mapreduce作业，这个作业需要读取步骤1中生成的数据，并转换为HFile。这个HFile一般可以放在hbase所在hdfs集群上的某个临时目录下面</li>
+<li>令hbase加载步骤2生成的HFile</li>
+</ol>
+<p>网上大多数教程是讲如何导入数据，那么这里就讲讲如何批量删除数据。假设我们要删的数据保存在<code>/tmp/input.txt</code>里，以每行写一个timestamp和一个key：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">1573542224666,test157354-1958983957411631613/hello-00000</span><br><span class="line">1573542224674,test157354-1958983957411631613/hello-00001</span><br><span class="line">1573542224680,test157354-1958983957411631613/hello-00002</span><br><span class="line">1573542224687,test157354-1958983957411631613/hello-00003</span><br><span class="line">1573542224693,test157354-1958983957411631613/hello-00004</span><br><span class="line">1573542224700,test157354-1958983957411631613/hello-00005</span><br><span class="line">1573542224707,test157354-1958983957411631613/hello-00006</span><br><span class="line">1573542224713,test157354-1958983957411631613/hello-00007</span><br><span class="line">1573542224724,test157354-1958983957411631613/hello-00008</span><br><span class="line">1573542224730,test157354-1958983957411631613/hello-00009</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>接下来要写一个mapper，将一行数据转换为KeyValue</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> <span class="class"><span class="keyword">class</span> <span class="title">DeleteMapper</span> <span class="keyword">extends</span> <span class="title">Mapper</span>&lt;<span class="title">LongWritable</span>, <span class="title">Text</span>, <span class="title">ImmutableBytesWritable</span>, <span class="title">KeyValue</span>&gt;</span>&#123;</span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="function"><span class="keyword">protected</span> <span class="keyword">void</span> <span class="title">map</span><span class="params">(LongWritable key, Text value, Context context)</span> <span class="keyword">throws</span> IOException, InterruptedException </span>&#123;</span><br><span class="line">      String[] tokens = value.toString().split(<span class="string">","</span>, <span class="number">2</span>);</span><br><span class="line">      <span class="keyword">long</span> ts = Long.parseLong(tokens[<span class="number">0</span>]);</span><br><span class="line">      String rowKey = tokens[<span class="number">1</span>];</span><br><span class="line"></span><br><span class="line">      Delete delete = <span class="keyword">new</span> Delete(rowKey.getBytes());</span><br><span class="line">      delete.deleteFamily(FAMILY_TO_BE_DELETE, ts);</span><br><span class="line"></span><br><span class="line">      ImmutableBytesWritable row = <span class="keyword">new</span> ImmutableBytesWritable(rowKey.getBytes());</span><br><span class="line">      <span class="keyword">for</span> (List&lt;Cell&gt; cells : delete.getFamilyCellMap().values())&#123;</span><br><span class="line">        <span class="keyword">for</span> (Cell cell : cells)&#123;</span><br><span class="line">          KeyValue kv = KeyValueUtil.ensureKeyValue(cell);</span><br><span class="line">          context.write(row, kv);</span><br><span class="line">        &#125;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>注意这里需要自己将Delete转换为KeyValue。如果是正常写数据，直接将mapper的输出类设为Put就行</p>
+<p>然后初始化并启动一个mapreduce job。其核心在于<code>HFileOutputFormat2.configureIncrementalLoad()</code>，这个方法会进一步设置一些job的属性，比如各种输入输出类型。有兴趣的话可以看看源码，如果不满意可以自行修改</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">Path filePath = <span class="keyword">new</span> Path(<span class="string">"file:///tmp/input.txt"</span>);</span><br><span class="line">Path hfilePath = <span class="keyword">new</span> Path(<span class="string">"/tmp/"</span> + tableName + <span class="string">"/"</span> + UUID.randomUUID().toString());</span><br><span class="line">Job job = Job.getInstance(conf, <span class="string">"bulkLoad"</span>);</span><br><span class="line">job.setJarByClass(DeleteMapper.class);</span><br><span class="line">job.setMapperClass(DeleteMapper.class);</span><br><span class="line">HTable table = getHTable(tableName);</span><br><span class="line">HFileOutputFormat2.configureIncrementalLoad(job, table);</span><br><span class="line">FileInputFormat.addInputPath(job, filePath);</span><br><span class="line">FileOutputFormat.setOutputPath(job, hfilePath);</span><br><span class="line">job.waitForCompletion(<span class="keyword">true</span>);</span><br></pre></td></tr></table></figure>
+
+<p>如果job能正常运行，那么会在<code>&quot;/tmp/&quot; + tableName + &quot;/&quot; + UUID.randomUUID().toString()</code>下生成一些HFile。最后加载这些HFile，最好在加载完后把HFile删掉</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">LoadIncrementalHFiles loadFiles = <span class="keyword">new</span> LoadIncrementalHFiles(conf);</span><br><span class="line">HTable table = getHTable(tableName);</span><br><span class="line">loadFiles.doBulkLoad(hfilePath, table);</span><br></pre></td></tr></table></figure>
+
+<p>实际上现在很多hbase的操作都是想办法直接操作HFile而非直接访问region server，从而降低对线上服务的影响。目前没有在启用hbase加密的集群上试过，据说因为加解密是在region server上完成的，那么估计就不能用这种方式了。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/09/redis-read6/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/11/09/redis-read6/" class="post-title-link" itemprop="url">redis学习（6）事件</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-11-09 00:00:00" itemprop="dateCreated datePublished" datetime="2019-11-09T00:00:00+08:00">2019-11-09</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-11-12 21:32:05" itemprop="dateModified" datetime="2019-11-12T21:32:05+08:00">2019-11-12</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>redis总体架构是reactor模型，即通过不断等待并处理一个个事件来完成任务，其支持的事件类型可以分为文件事件和时间事件。redis的主进程实际上就是这样的一个过程，从源码可以看到，<code>main()</code>函数最后会调一个<code>aeMain()</code>的函数，它的内部是一个事件循环，处理事件的过程在<code>aeProcessEvents()</code>里完成：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">aeMain</span><span class="params">(aeEventLoop *eventLoop)</span> </span>&#123;</span><br><span class="line">    eventLoop-&gt;stop = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">while</span> (!eventLoop-&gt;stop) &#123;</span><br><span class="line">        <span class="keyword">if</span> (eventLoop-&gt;beforesleep != <span class="literal">NULL</span>)</span><br><span class="line">            eventLoop-&gt;beforesleep(eventLoop);</span><br><span class="line">        aeProcessEvents(eventLoop, AE_ALL_EVENTS|AE_CALL_AFTER_SLEEP);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">aeProcessEvents</span><span class="params">(aeEventLoop *eventLoop, <span class="keyword">int</span> flags)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">int</span> processed = <span class="number">0</span>, numevents;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果不要求处理时间事件和文件事件则立刻返回</span></span><br><span class="line">    <span class="keyword">if</span> (!(flags &amp; AE_TIME_EVENTS) &amp;&amp; !(flags &amp; AE_FILE_EVENTS)) <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">     <span class="comment">// AE_DONT_WAIT标志表示是否需要尽快返回</span></span><br><span class="line">     <span class="comment">// 如果是的话，则将等待时间设的尽可能短</span></span><br><span class="line">    <span class="keyword">if</span> (eventLoop-&gt;maxfd != <span class="number">-1</span> ||</span><br><span class="line">        ((flags &amp; AE_TIME_EVENTS) &amp;&amp; !(flags &amp; AE_DONT_WAIT))) &#123;</span><br><span class="line">        <span class="keyword">int</span> j;</span><br><span class="line">        aeTimeEvent *shortest = <span class="literal">NULL</span>;</span><br><span class="line">        <span class="class"><span class="keyword">struct</span> <span class="title">timeval</span> <span class="title">tv</span>, *<span class="title">tvp</span>;</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// 如果需要尽快处理一个时间事件，就找一个最近的</span></span><br><span class="line">        <span class="keyword">if</span> (flags &amp; AE_TIME_EVENTS &amp;&amp; !(flags &amp; AE_DONT_WAIT))</span><br><span class="line">            shortest = aeSearchNearestTimer(eventLoop);</span><br><span class="line">        <span class="keyword">if</span> (shortest) &#123; <span class="comment">// 如果找到了</span></span><br><span class="line">            <span class="keyword">long</span> now_sec, now_ms;</span><br><span class="line"></span><br><span class="line">            aeGetTime(&amp;now_sec, &amp;now_ms);</span><br><span class="line">            tvp = &amp;tv;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">long</span> <span class="keyword">long</span> ms = <span class="comment">// 就计算还要多久开始</span></span><br><span class="line">                (shortest-&gt;when_sec - now_sec)*<span class="number">1000</span> +</span><br><span class="line">                shortest-&gt;when_ms - now_ms;</span><br><span class="line"></span><br><span class="line">            <span class="keyword">if</span> (ms &gt; <span class="number">0</span>) &#123; <span class="comment">// 并将其设为最长等待时间</span></span><br><span class="line">                tvp-&gt;tv_sec = ms/<span class="number">1000</span>;</span><br><span class="line">                tvp-&gt;tv_usec = (ms % <span class="number">1000</span>)*<span class="number">1000</span>;</span><br><span class="line">            &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">                tvp-&gt;tv_sec = <span class="number">0</span>;</span><br><span class="line">                tvp-&gt;tv_usec = <span class="number">0</span>;</span><br><span class="line">            &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            <span class="keyword">if</span> (flags &amp; AE_DONT_WAIT) &#123; <span class="comment">// 否则检查一下是否需要立即返回</span></span><br><span class="line">                tv.tv_sec = tv.tv_usec = <span class="number">0</span>;</span><br><span class="line">                tvp = &amp;tv;</span><br><span class="line">            &#125; <span class="keyword">else</span> &#123; <span class="comment">// 不需要的话就可以block任意久</span></span><br><span class="line">                tvp = <span class="literal">NULL</span>;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// poll一下有多少个文件事件就绪</span></span><br><span class="line">        <span class="comment">// 这个地方可能会sleep</span></span><br><span class="line">        numevents = aeApiPoll(eventLoop, tvp);</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (eventLoop-&gt;aftersleep != <span class="literal">NULL</span> &amp;&amp; flags &amp; AE_CALL_AFTER_SLEEP)</span><br><span class="line">            eventLoop-&gt;aftersleep(eventLoop);</span><br><span class="line"></span><br><span class="line">        <span class="comment">// 遍历文件事件</span></span><br><span class="line">        <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; numevents; j++) &#123;</span><br><span class="line">            aeFileEvent *fe = &amp;eventLoop-&gt;events[eventLoop-&gt;fired[j].fd];</span><br><span class="line">            <span class="keyword">int</span> mask = eventLoop-&gt;fired[j].mask;</span><br><span class="line">            <span class="keyword">int</span> fd = eventLoop-&gt;fired[j].fd;</span><br><span class="line">            <span class="keyword">int</span> fired = <span class="number">0</span>; <span class="comment">// 需要记录一下是否已经执行该事件</span></span><br><span class="line"></span><br><span class="line">            <span class="comment">// 这个地方有个特殊的标志是AE_BARRIER</span></span><br><span class="line">            <span class="comment">// 每个FileEvent有两个回调函数，分别是读操作和写操作</span></span><br><span class="line">            <span class="comment">// 一般会先读后写，比如先读完用户请求、处理完后再写回去</span></span><br><span class="line">            <span class="comment">// 但有时候需要先写后读，比如应当先落盘再通知用户已成功处理</span></span><br><span class="line">            <span class="comment">// 如果设置了AE_BARRIER，则表示先写后读</span></span><br><span class="line">            <span class="keyword">int</span> invert = fe-&gt;mask &amp; AE_BARRIER;</span><br><span class="line"></span><br><span class="line">            <span class="comment">// 执行读操作</span></span><br><span class="line">            <span class="keyword">if</span> (!invert &amp;&amp; fe-&gt;mask &amp; mask &amp; AE_READABLE) &#123;</span><br><span class="line">                fe-&gt;rfileProc(eventLoop,fd,fe-&gt;clientData,mask);</span><br><span class="line">                fired++;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            <span class="comment">// 执行写操作</span></span><br><span class="line">            <span class="keyword">if</span> (fe-&gt;mask &amp; mask &amp; AE_WRITABLE) &#123;</span><br><span class="line">                <span class="keyword">if</span> (!fired || fe-&gt;wfileProc != fe-&gt;rfileProc) &#123;</span><br><span class="line">                    fe-&gt;wfileProc(eventLoop,fd,fe-&gt;clientData,mask);</span><br><span class="line">                    fired++;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            <span class="comment">// 如果要求先写后读，那么这里还要执行一下读操作</span></span><br><span class="line">            <span class="keyword">if</span> (invert &amp;&amp; fe-&gt;mask &amp; mask &amp; AE_READABLE) &#123;</span><br><span class="line">                <span class="keyword">if</span> (!fired || fe-&gt;wfileProc != fe-&gt;rfileProc) &#123;</span><br><span class="line">                    fe-&gt;rfileProc(eventLoop,fd,fe-&gt;clientData,mask);</span><br><span class="line">                    fired++;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            processed++;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    <span class="comment">// 执行时间事件</span></span><br><span class="line">    <span class="keyword">if</span> (flags &amp; AE_TIME_EVENTS)</span><br><span class="line">        processed += processTimeEvents(eventLoop);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> processed;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>简单来说就是先检查有没有文件事件就绪，如果有就处理，没有的话依次处理已就绪的时间事件</p>
+<h2 id="文件事件"><a href="#文件事件" class="headerlink" title="文件事件"></a>文件事件</h2><p>基本上所有网络请求都是文件事件，比如先初始化并监听一个socket，直到数据过来。监听socket可以是evport、epoll、kqueue、select，这几个函数的使用优先级依次降低，具体用哪个和当前操作系统有关，linux上一般是epoll。redis将这些I/O复用函数统一整合包装成诸如<code>aeApiCreate()</code>、<code>aeApiAddEvent()</code>、<code>aeApiPoll()</code>之类的函数。其中最主要的还是<code>aeApiPoll()</code>，这个函数会阻塞当前线程，直到有事件就绪或超时，然后返回已就绪的句柄。一般认为<code>evport</code>、<code>kqueue</code>、<code>epoll</code>都是O(1)的时间复杂度，而<code>select</code>是O(n)。</p>
+<p>一个完整的用户请求可能包含多个文件事件。以TCP请求为例，在服务器初始化时，会加入一系列以<code>acceptTcpHandler()</code>为回调函数的读事件，事件触发后会<code>accept()</code>用户请求，创建一个<code>client</code>和一个以<code>readQueryFromClient()</code>为回调函数的读事件。等这个事件再触发后，会去读用户传过来的数据，解析命令并处理请求，最后返回客户端。</p>
+<p>值得一提的是，这里<code>poll</code>完了以后只是说句柄可以读/写了，而不是数据已经读完了，因此poll完后还需要自己调<code>read()</code>，这一步还是阻塞读。当然如果CPU处理不过来也会阻塞。</p>
+<h2 id="时间事件"><a href="#时间事件" class="headerlink" title="时间事件"></a>时间事件</h2><p>时间事件的处理逻辑在<code>processTimeEvents()</code>里。相对来说时间事件没那么复杂，时间到了就执行。server维护了一个时间事件链表，每个时间事件结构体里维护了执行时间点、回调函数和一些别的数据。在加入一个时间事件时会将其插入表头，每次处理时间事件时会扫这个链表，如果一个事件的时间到了就执行。执行完后判断是不是重复事件，如果是（标志为<code>AE_NOMORE</code>）则调整其待执行时间，否则将其ID置为<code>AE_DELETED_EVENT_ID</code>，下次处理时间事件时执行它的<code>finalizerProc()</code>回调函数，并从链表中移除。</p>
+<p>理论上扫整个链表确实耗时，不过redis内置的时间事件很少，一般也只有<code>serverCron()</code>。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/05/redis-read5/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1255,286 +1442,6 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/20/trans_and_ACID/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/09/20/trans_and_ACID/" class="post-title-link" itemprop="url">事务与ACID</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-09-20 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-20T00:00:00+08:00">2019-09-20</time>
-            </span>
-          
-            
-
-            
-              <span class="post-meta-item">
-                <span class="post-meta-item-icon">
-                  <i class="fa fa-calendar-check-o"></i>
-                </span>
-                <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-09-23 11:12:09" itemprop="dateModified" datetime="2019-09-23T11:12:09+08:00">2019-09-23</time>
-              </span>
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>之前没太搞懂幻读是什么意思，今天又查了下相关资料，补充一下。</p>
-<p>我们可以设想数据库是一系列静态数据的集合，某一时刻这个集合的所有元素及其关系构成了数据库的当前状态，一般来说如果“状态”不变，那么对外相同的读操作返回的结果是一样的；对数据库的写操作（增、删、改）会导致数据库从一个状态转移到另一个状态，而一系列读写操作的序列成为事务。</p>
-<p>一般我们会对事务拥有以下一些特性：</p>
-<ul>
-<li>原子性(atomicity)：这一系列操作要么都成功要么都失败，不允许将数据库状态滞留在某个中间环节</li>
-<li>一致性(consistency)：事务只能将数据库从一个有效的（valid）状态迁移到另一个有效的状态</li>
-<li>隔离性(isolation)：事务执行时理论上应当观测不到对方是否在执行</li>
-<li>持久性(durability)：事务提交并返回成功后，数据库应当保证永远记录其操作结果</li>
-</ul>
-<p>我看到的说法是一致性是目的，其他三个特性是为了保证一致性的手段</p>
-<h3 id="持久性-durability"><a href="#持久性-durability" class="headerlink" title="持久性(durability)"></a>持久性(durability)</h3><p>一般来说所有对数据库的操作都会有保留写日志，且会保存某个正确状态的副本/快照，这样一来一旦某个事务被提交（committed），且我们如果可以保证这个事务相关的写日志不丢，就可以保证事务的持久化。</p>
-<h3 id="原子性-atomicity"><a href="#原子性-atomicity" class="headerlink" title="原子性(atomicity)"></a>原子性(atomicity)</h3><p>几乎所有事务都要求要么成功要么失败，而即使是很短的事务也可能执行到一半中途停止，又或者事务提交后觉得不合适又要取消，因此往往会要求事务能够回滚（rollback）。</p>
-<p>先不考虑执行完后回滚的情况。显然，既然我们保留了写日志，那么从当前时刻的状态开始反向回放写日志，就可以恢复到事务提交前的状态；为了提高效率，可以在事务执行时设置一些检查点（check point），保存了事务执行到那一步时的数据库（部分）状态，这样回滚的时候直接跳到checkpoint即可。</p>
-<p>对于支持MVCC（Multi-Version Concurrency Control，多版本并发控制）的数据库而言，每个事务有一个全局唯一递增的时间戳/版本号，那么理论上只要把有相同时间戳的数据删掉就可以回滚到该事务运行之前，但前提是这个事务的中间结果不可以被其他事务观察到，这也引出了事务的隔离性</p>
-<h3 id="隔离性（Isolation）"><a href="#隔离性（Isolation）" class="headerlink" title="隔离性（Isolation）"></a>隔离性（Isolation）</h3><p>理想情况是数据库执行事务的时候是顺次执行的，但实际上为了提高效率，事务之间往往是并发执行，因此就导致事务之间很可能相互干扰，常见的干扰有：</p>
-<ul>
-<li>脏读（dirty read）：事务中的修改，即使未提交也会被其他事务看到</li>
-<li>不可重复读（nonrepeatable read）：同一事务内执行时，多次读同一数据，得到的结果不同</li>
-<li>幻读（phantom read）：同一事务内执行时，同样的范围查询得到的结果不同</li>
-</ul>
-<p>幻读和不可重复的读区别在于前者针对的是范围，后者针对的是某条具体的数据，而这点至少可以通过只对某条记录加锁就可以保证。与这三个问题相对应的是四种隔离级别：未提交读（read uncommitted）、提交读（read committed）、可重复读（repeatable reads）、可串行化（serializable），分别解决了三个问题</p>
-<p>我理解，“MVCC天然支持快照读，也就天然保证了隔离级别是可重复读”这个想法其实不完全对，假设事务都是先写WAL再落盘，那么在落盘的过程中，如果没有任何保障措施，对于大于该事务时间戳的事务而言，还是会出现不可重复读的情况。</p>
-<p>最简单的保障措施就是加锁，缺点是并发量降低。MySql中，MyISAM不支持事务，事务的ACID也就无从谈起；InnoDB引擎的默认隔离级别是可重复读，而上文也提到MVCC并不能保证带时间戳的快照读就等价于可重复读。中文相关的解释可以参考<a href="https://www.zhihu.com/question/67739617/answer/257065584" target="_blank" rel="noopener">关于mysql事务隔离级别MVCC多版本控制的一个疑问？ - 聿明leslie的回答 - 知乎</a>，简单来说就是事务提交成功并落盘的时候，会标明这页的数据被修改过，那么其他事务读到这一页数据的时候需要读最新数据+undo，回退到较早版本再读。</p>
-<p>而对于幻读，innodb的做法是加next-key lock，它包括一个行锁和一个区间锁，这样在事务的进行中可以避免其他事务插入/删除要关注的区间。按我理解如果区间无法确定，还是要锁表。</p>
-<h3 id="一致性（consistency）"><a href="#一致性（consistency）" class="headerlink" title="一致性（consistency）"></a>一致性（consistency）</h3><p>老实说我还是不太理解这个性质是什么意思，目前理解是数据库不能暴露出事务运行中间的状态。那么在分布式数据库中，某一时刻各个副本内容不同的状态也可以认为是“事务运行中间的状态”？</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/19/jvm9/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/09/19/jvm9/" class="post-title-link" itemprop="url">JVM学习（9）Java内存模型与线程</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-09-19 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-19T00:00:00+08:00">2019-09-19</time>
-            </span>
-          
-            
-
-            
-              <span class="post-meta-item">
-                <span class="post-meta-item-icon">
-                  <i class="fa fa-calendar-check-o"></i>
-                </span>
-                <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-09-18 18:07:23" itemprop="dateModified" datetime="2019-09-18T18:07:23+08:00">2019-09-18</time>
-              </span>
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>Java的一个重要应用场合是服务端，这对并发处理要求很高，因此JVM需要对并发处理提供足够的支持。</p>
-<p>同一台机器上的并发控制主要体现在CPU每个核与其他核数据一致性问题，现代计算机为每个计算单元提供了寄存器缓存，那么访问和修改时可能会因为缓存不一致而导致一些问题。此外，由于指令乱序执行，会导致如果一个线程依赖另一个线程的中间变量时会出现意想不到的后果。</p>
-<p><img src="/images/jvm_machine_memory_model.png" alt="处理器、高速缓存、主内存之间的交互关系"></p>
-<h2 id="Java内存模型"><a href="#Java内存模型" class="headerlink" title="Java内存模型"></a>Java内存模型</h2><p>JVM规范试图定义一种Java内存模型（Java Memory Model，JMM）来屏蔽各种硬件和平台的内存访问差异，实现让java在各种平台下都能达到一致的内存访问效果。如下图所示，可以将JVM内存模型和上图进行一一对应</p>
-<p><img src="/images/jvm_memory_model.png" alt="线程、主内存、工作内存之间的交互关系"></p>
-<p>JMM的变量主要指实例字段、静态字段、数组中的对象等，而不包括局部变量和方法参数（仅指变量的引用），因为后者是线程私有的，不会被共享，所以是线程安全的。JMM规定所有变量都存储在主内存（Main Memory）中；每个线程还有自己的工作内存（Working Memory），工作内存可以有主缓存中某个部分的缓存，线程对变量的所有操作都必须在工作内存中进行，而不能直接读写主内存中的变量，不同线程之间无法直接访问对方的工作内存，线程间的变量共享只能通过主内存完成。</p>
-<h3 id="内存间交互操作"><a href="#内存间交互操作" class="headerlink" title="内存间交互操作"></a>内存间交互操作</h3><p>JMM规定了以下8种操作是原子操作，用于内存交互：</p>
-<ol>
-<li>lock（锁定）：作用于主内存，将一个变量标识为某个线程独占</li>
-<li>unlock（解锁）：作用于主内存，将一个变量状态解锁</li>
-<li>read（读取）：作用于主内存，将一个变量的值从主内存传输到工作内存</li>
-<li>load（载入）：作用于工作内存，把read得到的变量放入工作内存的变量副本中</li>
-<li>use（使用）：作用于工作内存，将其中的一个变量的值传递给工作引擎，每当执行引擎遇到一个需要使用变量的值的字节码指令时将会执行这个操作</li>
-<li>assign（赋值）：作用于工作内存，将一个从执行引擎接收到的值复制给工作内存的变量，每当执行引擎遇到一个赋值的字节码指令时执行这个操作</li>
-<li>store（存储）：作用于工作内存的变量，将工作内中一个变量的值传送到主内存中，以便write操作使用</li>
-<li>write（写入）：作用于主内存的变量，将store操作得到的变量放入主内存的变量中</li>
-</ol>
-<p>JVM还规定这8种操作必须满足以下约束：</p>
-<ul>
-<li>read和load、store和write要配对使用，且必须顺序执行（但不一定连续）</li>
-<li>不允许一个线程丢弃它最近的assign操作，即变量一旦在工作内存中被改变，就必须将其同步到主内存</li>
-<li>不允许一个线程无原因地（没有发生过任何assign操作）将数据从线程的工作内存同步回主内存</li>
-<li>一个新变量只能在主内存中“诞生”，不允许工作内存中直接使用一个未被初始化的值。换言之，在对一个变量进行use、store操作前，必须先执行过assign、load</li>
-<li>一个变量在同一时刻只允许一个线程对其进行lock操作，但可以被同一个线程重复执行多次，且只有执行相同次数的unlock后才能解锁该变量</li>
-<li>执行lock操作后，工作内存中此变量的值会被清空，在执行引擎使用这个变量前，需要重新执行load或assign操作，初始化变量的值</li>
-<li>不允许unlock未被lock的变量，或被其他线程lock的变量</li>
-<li>对变量执行unlock前，必须先将此变量同步回主内存</li>
-</ul>
-<h3 id="volatile变量"><a href="#volatile变量" class="headerlink" title="volatile变量"></a>volatile变量</h3><p>对于被<code>volatile</code>修饰的变量，JVM有一些特殊的规定，保证volatile变量有两个特性：</p>
-<ul>
-<li>可见性：如果volatile变量被一个线程修改过，那么其他线程可以立即得知改变后的值（但不代表它是线程安全的，因为修改过程未必是原子的）</li>
-<li>禁止指令重排序优化：禁止volatile变量相关的指令重排序优化</li>
-</ul>
-<p>可见性很容易理解，指令重排可以举个例子：</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">volatile</span> <span class="keyword">boolean</span> flag = <span class="keyword">false</span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// thread A</span></span><br><span class="line">do_initialize();</span><br><span class="line">flag = <span class="keyword">true</span>;</span><br><span class="line"></span><br><span class="line"><span class="comment">// thread B</span></span><br><span class="line"><span class="keyword">while</span> (!flag) &#123;</span><br><span class="line">    Thread.sleep(<span class="number">1000</span>);</span><br><span class="line">&#125;</span><br><span class="line">do_work();</span><br></pre></td></tr></table></figure>
-
-<p><code>flag</code>变量表示是否初始化，指令重排序优化可能会使得线程A中的<code>flag=true;</code>执行在<code>do_initialize()</code>前，进而导致线程B未初始化的情况下就继续工作。</p>
-<p>（其实我以前在c#还是C++里也遇到过这种坑，只是如果<code>flag</code>不被volatile修饰的话，线程B会认为<code>flag</code>一直是<code>false</code>，从而导致循环一直在执行）</p>
-<p>一般禁止指令重排序的方式是在相关操作字节码前/后插入一个内存屏障（Memory Barrier或Memory Fence），类似<code>lock addl $0x0, (%esp)</code>之类的空操作，但由于这条指令在cpu执行时一定保证它之后的指令不会被优化到前面，因此保证了这条指令前后的代码块执行时有严格的时间顺序。JMM通过以下额外规则保证volatile变量V,W具有上述性质：</p>
-<ul>
-<li>对V的load和use操作指令必须连续执行，不可以单独进行load或use，这保证了使用volatile变量的值每次使用时都是从主内存获得的</li>
-<li>对V的assign和store操作指令必须连续执行，不可以单独进行assign或store，这保证了volatile变量一旦被修改过立刻同步会主内存</li>
-<li>将use-load-read或assign-store-write操作序列记为f1-f2-f3，如果f1(V)在f1(W)前，那么f3(V)在f3(W)前，这保证了volatile变量不会被指令重排序优化</li>
-</ul>
-<h3 id="long和double变量"><a href="#long和double变量" class="headerlink" title="long和double变量"></a>long和double变量</h3><p>JMM允许对64位的long和double的read、write、load、store操作可以不保证原子性，也就是说理论上存在如果多个线程共享一个非volatile的long或double变量，那么可能会读到一个“修改到一半”的值</p>
-<p>几乎所有商用JVM都会保证对long和double的原子性，因此一般也不用专门将long和double声明为volatile</p>
-<h3 id="原子性、可见性和有序性"><a href="#原子性、可见性和有序性" class="headerlink" title="原子性、可见性和有序性"></a>原子性、可见性和有序性</h3><p>所以JMM是围绕并发过程中如何处理原子性、可见性和有序性来建立的</p>
-<ul>
-<li>原子性（Atomicity） ：可以认为基本类型的访问读写都是原子性的，而对于更大规模的事务，需要用lock和unlock来进行处理。JVM提供<code>monitorenter</code>和<code>monitorexit</code>两个字节码来隐式使用这两个操作，反映到java代码就是<code>synchronized</code>关键字。</li>
-<li>可见性（Visibility）：上文提到<code>volatile</code>可以让一个变量的修改立刻被所有线程感知到，此外<code>synchronized</code>和<code>final</code>关键字也可以提供可见性：由于<code>synchronized</code>隐式调用了unlock，JMM规定unlock前需要先将变量同步回主内存，而其他线程获取这个变量又一定在unlock后；<code>final</code>则是逻辑上保证初始化后才能被其他线程使用</li>
-<li>有序性（Ordering）：天然的有序性是指本线程内的进行观察，所有的操作都是有序的（As-If-Serial Semantics），而其他线程观察这一线程则未必（由指令重排/内存同步延迟导致）。可以通过volatile和synchronized来实现有序性。</li>
-</ul>
-<h3 id="先行发生原则"><a href="#先行发生原则" class="headerlink" title="先行发生原则"></a>先行发生原则</h3><p>指令重排序可以提高程序运行效率，但也导致程序执行结果不一定能够保持原意，因此JMM提出了几个先行发生原则。所谓的先行发生（happens-before），是指如果操作A happens before操作B，那么B可以观测到A产生的所有影响。</p>
-<p>JMM规定以下所有操作需要保证以下规则：</p>
-<ol>
-<li>程序次序规则（Program Order Rule）：同一线程内按照程序代码顺序执行，书写在前面的操作要happens-before后面的操作（分支、循环之类的另说）</li>
-<li>管程锁定规则（Monitor Lock Rule）：一个unlock操作happens-before后面对同一个锁的lock操作，这里“后面”是时间上的顺序</li>
-<li>volatile变量规则（Volatile Variable Rule）：对有一个volatile变量的写操作happens-before后面对这个变量的读操作，这里“后面”是时间上的顺序</li>
-<li>线程启动原则（Thread Start Rule）：Thread对象的start()方法happens-before此线程的每一个动作</li>
-<li>线程终止原则（Thread Termination Rule）：线程中所有操作都happens-before对此线程的终止检测，终止检测是指<code>Thread.join()</code>、<code>Thread.isAlive()</code>等终止和检测方法</li>
-<li>线程中断原则（Thread Interruption Rule）：对线程的<code>interrupt()</code>方法的调用happens-before被中断线程的代码检测到中断事件发生，比如<code>Thread.interrupted()</code></li>
-<li>对象终结原则（Finalizer Rule）：一个对象的初始化完成（构造函数执行结果）happens-before它的<code>finalize()</code>方法</li>
-<li>传递性（Transitivity）：如果操作A happens-before B，B happens-before C，则A happens-before C</li>
-</ol>
-<p>Java中无需任何同步手段，只要操作间符合以上规则，都可以保证这些操作是“顺序的”。另外A happens-before B不代表A一定在B之前执行，反之亦然，比如两个线程读写同一个非volatile变量，很可能A先对变量赋值，但因为同步延迟，B后读到的值还是原来的；同样的，同一代码块里的指令如果没有依赖性，那么后写的代码也可能被指令重排序到前面执行。</p>
-<h2 id="Java与线程"><a href="#Java与线程" class="headerlink" title="Java与线程"></a>Java与线程</h2><p>Java提供了不同硬件和平台下对线程的统一处理，每个执行了<code>start()</code>且未结束的<code>java.lang.Thread</code>类实例就代表了一个线程，但具体怎么实现取决于平台。实现线程主要有3种方式：使用内核线程实现、使用用户线程实现和使用用户线程+轻量级线程混合实现。</p>
-<h3 id="使用内核线程实现"><a href="#使用内核线程实现" class="headerlink" title="使用内核线程实现"></a>使用内核线程实现</h3><p>内核线程（Kernal-Level Thread，KLT）就是直接由从操作系统内核（Kernal）支持的线程，这种线程由内核来完成线程切换，内核通过操纵调度器（Scheduler）对线程进行调度，并负责将线程的任务映射到各个处理器上。</p>
-<p>程序一般不会直接去使用内核线程，而使用内核线程的一种高级接口——轻量级进程（Light Weight Process, LWP），轻量级进程就是通常意义上的进程，一般来说和普通进程的区别也只是它只有一个最小的执行上下文和调度程序所需的统计信息。轻量级进程需要一个内核线程支持，因此这种方式需要内核支持内核线程，对应关系如下：</p>
-<p><img src="/images/jvm_KLT.png" alt="内核线程和轻量级进程"></p>
-<p>使用内核线程后，线程可以被内核感知到，那么某个线程阻塞后就可以内核自动切换、不会阻塞所有线程，缺点是需要进行系统调用，且占用一定内核资源，而系统支持的轻量级进程数量是有限的。</p>
-<h3 id="使用用户线程实现"><a href="#使用用户线程实现" class="headerlink" title="使用用户线程实现"></a>使用用户线程实现</h3><p>广义上讲，非内核线程都是用户线程（包括轻量级进程），而狭义上的用户线程则是由纯应用程序在用户空间模拟的多线程，内核无法感知这些线程之间的切换，其建立、同步、销毁、调度不需要内核的帮助。好处是不需要内核参与，提高了效率，缺点是比如线程阻塞、处理器分配之类的问题很难处理。</p>
-<p>从这个角度讲，纯由用户空间模拟的线程，可能更类似于协程？只是调度策略不太一样，毕竟很多协程之间有明显的依赖关系。</p>
-<h3 id="使用用户线程-轻量级进程混合实现"><a href="#使用用户线程-轻量级进程混合实现" class="headerlink" title="使用用户线程+轻量级进程混合实现"></a>使用用户线程+轻量级进程混合实现</h3><p>简单来说就是将多个用户线程映射到多个轻量级进程上，降低阻塞概率。很多UNIX系统都提供了这种线程模型的实现。</p>
-<h3 id="Java线程的实现"><a href="#Java线程的实现" class="headerlink" title="Java线程的实现"></a>Java线程的实现</h3><p>JVM未规定Java采用哪种方式实现，JDK1.7为止，在windows和linux上使用了一对一线程模型实现，而在Solaris平台下支持一对一和多对多模型，因此JVM也支持这两种模式。</p>
-<h3 id="线程调度"><a href="#线程调度" class="headerlink" title="线程调度"></a>线程调度</h3><p>主流的线程调度有协同式调度（Cooperative Threads-Scheduling）和抢占式调度（Preemptive Threads-Scheduling），协同式调度是由线程自己来通知系统切换线程，而抢占式调度则是由系统来分配执行时间（比如时间片轮转调度算法）。</p>
-<p>显然协同式调度会有线程阻塞问题，所以JVM还是用抢占式调度方式。Java可以设置线程优先级，不过只是对底层的一个建议，不一定严格保证线程优先级。</p>
-<h3 id="状态转换"><a href="#状态转换" class="headerlink" title="状态转换"></a>状态转换</h3><p>Java语言定义了5种线程状态，任意线程在同一时间点有且只有其中一个状态：</p>
-<ul>
-<li>新建（New）：创建后尚未启动</li>
-<li>运行（Runnable）：包括操作系统线程的running和ready状态，即可以正在执行，也可能在等待CPU分配时间</li>
-<li>等待（Waiting）：不会分配CPU时间，包括无限期等待和有限期等待，都可以被其他线程唤醒，区别在于一定时间过后是否会被系统自动唤醒，进入等待状态的方式包括：<ul>
-<li>Object.wait()</li>
-<li>Thread.join()</li>
-<li>LockSupport.park()、LockSupport.parkNanos()、LockSupport.parkUntil()</li>
-</ul>
-</li>
-<li>阻塞（Blocked）：不会分配CPU时间，与等待的区别是阻塞一般是在等一个排他锁，而等待则是在等一段时间或唤醒动作。</li>
-<li>结束（Terminated）：终止状态</li>
-</ul>
-<p>几种状态的转换关系如下</p>
-<p><img src="/images/jvm_thread_state_machine.png" alt="线程状态转换"></p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
@@ -1584,7 +1491,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">25</span>
+          <span class="site-state-item-count">27</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1649,7 +1556,11 @@
         
           
         
-        <span class="site-state-item-count">27</span>
+          
+        
+          
+        
+        <span class="site-state-item-count">29</span>
         <span class="site-state-item-name">tags</span>
         
       </div>

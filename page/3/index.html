@@ -191,6 +191,187 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/arthas/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/arthas/" class="post-title-link" itemprop="url">阿里Arthas学习</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:01 / Modified: 16:51:04" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:01+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>前几天同事分享了一个巨流弊的工具<a href="https://alibaba.github.io/arthas/" target="_blank" rel="noopener">Arthas</a>，可以在线上花式调试/监控JVM上的代码运行状况，excited!这里记录几个常用命令。</p>
+<p>启动命令: <code>wget https://alibaba.github.io/arthas/arthas-boot.jar &amp;&amp; java -jar arthas-boot.jar</code></p>
+<h3 id="dashboard"><a href="#dashboard" class="headerlink" title="dashboard"></a>dashboard</h3><p>就是dashboard</p>
+<h3 id="watch"><a href="#watch" class="headerlink" title="watch"></a>watch</h3><p>流弊！watch可以监视某个方法的运行状况，但缺点是它不能像断点一样阻塞这个线程。一般调用方法为watch $class_name $method $watch_express $cond_express $flags, 其中观察表达式（watch_express）和条件表达式（cond_express）为<a href="https://commons.apache.org/proper/commons-ognl/language-guide.html" target="_blank" rel="noopener">OGNL表达式</a>，个人还不太会用，基本元素可以参考表达式核心变量。</p>
+<p>class_name需要把路径写全，某个类的子类要写成parentClass$subClass，用$符号隔开</p>
+<p>-b -e -s 分别表示在方法运行前、异常返回后、正常返回后监控。-f或者什么都不写表示返回后监控。</p>
+<p>-x表示观察递归深度。比如某个参数p有内部变量p1，p1有内部变量p2，那么要打印出p2，需要指定-x 3</p>
+<h3 id="sc"><a href="#sc" class="headerlink" title="sc"></a>sc</h3><p>查看JVM已加载的类信息</p>
+<h3 id="redefine"><a href="#redefine" class="headerlink" title="redefine"></a>redefine</h3><p>流弊！<a href="https://alibaba.github.io/arthas/redefine.html" target="_blank" rel="noopener">redefine</a>可以加载外部某个.class文件进jvm，redefine后的原来的类不能恢复，redefine有可能失败（比如增加了新的field），参考jdk本身的文档。有两个限制：</p>
+<ul>
+<li>不允许新增加field/method</li>
+<li>正在跑的函数，没有退出不能生效，比如下面新增加的System.out.println，只有run()函数里的会生效</li>
+</ul>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">MathGame</span> </span>&#123;</span><br><span class="line">    <span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> InterruptedException </span>&#123;</span><br><span class="line">        MathGame game = <span class="keyword">new</span> MathGame();</span><br><span class="line">        <span class="keyword">while</span> (<span class="keyword">true</span>) &#123;</span><br><span class="line">            game.run();</span><br><span class="line">            TimeUnit.SECONDS.sleep(<span class="number">1</span>);</span><br><span class="line">            <span class="comment">// 这个不生效，因为代码一直跑在 while里</span></span><br><span class="line">            System.out.println(<span class="string">"in loop"</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"> </span><br><span class="line">    <span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">run</span><span class="params">()</span> <span class="keyword">throws</span> InterruptedException </span>&#123;</span><br><span class="line">        <span class="comment">// 这个生效，因为run()函数每次都可以完整结束</span></span><br><span class="line">        System.out.println(<span class="string">"call run()"</span>);</span><br><span class="line">        <span class="keyword">try</span> &#123;</span><br><span class="line">            <span class="keyword">int</span> number = random.nextInt();</span><br><span class="line">            List&lt;Integer&gt; primeFactors = primeFactors(number);</span><br><span class="line">            print(number, primeFactors);</span><br><span class="line"> </span><br><span class="line">        &#125; <span class="keyword">catch</span> (Exception e) &#123;</span><br><span class="line">            System.out.println(String.format(<span class="string">"illegalArgumentCount:%3d, "</span>, illegalArgumentCount) + e.getMessage());</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+<p>简单来说可以不用每次修改完后重新打包-上传-重启了。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/cheat1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/cheat1/" class="post-title-link" itemprop="url">页游辅助思路</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:40:53" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>其实我玩过的页游也就是舰C，这游戏最大的特点就是制作者恨不得让玩家每天996的肝游戏（如果玩家稍微有点追求），发展到现在可以说没辅助没法玩。不过这个游戏也可以很简单的进行辅助操作，因为页面之间变化不大，操作简单：玩家也就只能点点鼠标。</p>
+<p>原理简单来说还是模拟人类玩家的操作方式：根据页面图像来进行下一步操作。</p>
+<p>页面图像获取一般还是用GetPixel之类的API。在windows上，可能用DX系列的API更好一些，但调用实在太复杂，且兼容性比较差。话说自从舰C改版到HTML5后，基本只能用chrome或者chromium内核来玩了，而这个浏览器似乎不支持PrintWindow等可以通过窗口DC直接获取截图的方法——或者说DX窗口都不支持PrintWindow，导致我只能用全屏截图的API或者类似的API，而不能把游戏窗口隐藏到后端：毕竟挂机的时候也希望干点别的事。个人猜测可能是因为DX截图是基于显示设备的，没办法获取被隐藏的窗口。</p>
+<p>图像获取后的另一个问题是”判断“，往大了说是图像识别，但通常只要判断子图是否一致，甚至某几个像素是否一致就可以了。按键精灵这种外挂似乎可以通过子图识别来确定，不过我觉得舰C不太需要这么高端的功能，毕竟几乎所有按钮出现的位置都不会变，因此不需要去”找“，而只需要在特定位置”判断“某个子图是否出现即可。</p>
+<p>模拟操作相对而言很简单，获取到窗口句柄后PostMessage就可以了。</p>
+<p>”输入“和”输出“手段就这样愉快的决定了，接下来是辅助器的设计思路。由于舰C这种页游的页面显示变化很小，场景间处理逻辑差别很大，关联很小，故可以用状态机模型来进行编程：维持一个context，将每一个场景视为”state“，出现某个图像/自定义函数作为”condition“，如果满足条件则进行状态切换/改变上下文/进行操作。舰C的context比较好获得，大部分可以通过游戏内部数据获取，可以通过截取解析HTTP包获得，或者干脆用现成的工具74EO解析。一般的页游也差不多，如果不想解析包，也可以直接处理图像获得（比如血条什么的），但毕竟不如直接解包来的准确。</p>
+<p>举个例子，比如在舰C里刷闪，涉及到的场景大致有主页面、队伍编成页面、补给页面、地图选择页面、战斗页面，切换条件分别为：</p>
+<ul>
+<li>主页面：如果编成未结束进入编程场景；如果没补给完则通过补给按钮进入补给场景；否则进入地图选择场景</li>
+<li>队伍编成场景：选择要刷闪的船，选完后返回主页面。没有要刷闪的船则在返回后跳出。</li>
+<li>补给场景：能补给则补给，补给完则返回主页面。</li>
+<li>地图选择场景：进入1-1，切换至战斗场景。</li>
+<li>战斗场景：不停出击，直至返回主页面。<br>每个场景内的操作相对简单，比如在战斗场景里，如果出现阵型选择则点击单纵（实际上刷闪因为只有三艘船不会选择阵型），出现战后结算则随便点一下，出现是否前进则点击前进，出现是否入夜则点击不入夜。</li>
+</ul>
+<p>可以思考一下如何在刷闪的时候收发远征？</p>
+<p>在构筑好状态机后，我们需要两个协程，协程A每隔一段时间（比如3秒）截图，将截图放入上下文，控制权交给协程B；协程B跑上面这个状态机，根据上下文进行一轮条件判断和操作，再交给协程A。</p>
+<p>我一开始的代码逻辑是顺序的：判断图像-进行操作-判断图像-进行操作。。。。这种编程思路的坏处是，如果某个判断/操作失败了（比如窗口没收到点击消息、某个图片迟迟没弹出等），需要进行异常处理的逻辑会变得非常复杂。而页游中同一场景中的条件判断几乎不重复，即使某次判断/操作失败了也可以再一次正确处理。另外，如果游戏机制改变了，需要插入的逻辑也会比较简单。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -264,115 +445,6 @@
 <figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 
 <p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/jni/" class="post-title-link" itemprop="url">JNI使用中的一些注意事项</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:41:05" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。</p>
-<h3 id="内存模型和参数传递"><a href="#内存模型和参数传递" class="headerlink" title="内存模型和参数传递"></a>内存模型和参数传递</h3><p>比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直接用参数传过来。如果数据量比较大，或者不是基本类型，可能需要用byte[]传。如果数据量巨大，只能用文件等形式传递了。个人目前处理的文件一般是不超过20MB的小文件，因此选择第二种方式传递参数（虽然数据在heap区和native区来回复制也有一定代价），不过好在数据量不是很大，可以接受——另外一个使用byte[]而非DirectByteBuffer的重要原因是我还是有可能会用java代码来处理数据，而java处理DirectByteBuffer有时候很麻烦。。如果是非常大的文件（比如视频文件），使用临时文件/DirectBuffer更好一些。</p>
-<p>流数据的处理更复杂一些。现在似乎没有非常方便的在本地代码中读InputStream等的方法（当然可以做到，比如使用<code>GetMethodID&amp;Call??Method</code>等），但我没试过这种方式——即使不考虑效率因素，在本地代码中调用JAVA方法也不是一个好选择，毕竟本地代码处理JAVA运行中的各种异常实在太复杂了。最好还是将数据预处理后，交由本地代码处理，本地代码尽量保持简洁。</p>
-<p>当然最重要的还是保证内存不泄漏，本地代码中new/malloc自不必说，记得在最后调用DeleteLocalRef、ReleaseByteArrayElements等函数释放JAVA对象的引用。</p>
-<h3 id="加载动态库"><a href="#加载动态库" class="headerlink" title="加载动态库"></a>加载动态库</h3><p>我用的是org.scijava:native-lib-loader。本质上调用的还是System.load，这个库的做法是将动态库extract提取到一个临时文件，然后System.load()，不想引入新的库的话可以自己手动实现一下。</p>
-<h3 id="编译和调试"><a href="#编译和调试" class="headerlink" title="编译和调试"></a>编译和调试</h3><p>首先编译环境最好和目标运行环境一致，否则可能会出现各种意想不到的状况，比如系统库版本不兼容等。</p>
-<p>如果是自己重新写一个库可以规避掉很多问题。我遇到的情况通常是需要改写现有的库的接口，方便JAVA调用，那么至少需要</p>
-<ul>
-<li>修改源代码，暴露出可供调用的JNI外部函数</li>
-<li>改写MakeFile/CMakeLists，将原本的可执行文件编译为动态链接库</li>
-</ul>
-<p>只调试本地代码相对简单，但有些错误只有带JAVA调用时才会出现。我使用的IDE是CLion，暂时没找到比较方便的调试方法，目前的做法是加上DEBUG参数编译动态库后，</p>
-<ol>
-<li>在调用native方法前打个断点，运行至断点</li>
-<li>找到java进程的ID（ps，jps或者在程序里打印出来）</li>
-<li>CLion中Run - Attach to Local Process，选择对应的PID，在要调试的地方打断点</li>
-<li>继续java进程，进入本地代码中的断点，开始调试</li>
-</ol>
-<p>尽管GDB Remote Debug可以远程调试，但似乎不支持远程调试JNI？</p>
-<h3 id="代码编写时的注意事项"><a href="#代码编写时的注意事项" class="headerlink" title="代码编写时的注意事项"></a>代码编写时的注意事项</h3><ol>
-<li>很多库实现时只支持FILE<em>，改写为读内存很麻烦。这里推荐fmemopen和open_memstream，可以将数组转变为FILE</em>。</li>
-<li>很多C/C++代码逻辑中没有异常处理，我个人也不建议使用throw/catch。但JAVA中使用异常捕捉机制会方便很多，且有时候本地代码中遇到错误时也需要把异常信息传给java进程，那么在C/C++代码运行结束且发现运行出错时，手动抛出一个JAVA异常（调用(*env)-&gt;ThrowNew()），可能是一个比较好的风格。</li>
-</ol>
-<h3 id="线程安全"><a href="#线程安全" class="headerlink" title="线程安全"></a>线程安全</h3><p>有些库可能只支持单线程，或者可能最初设计的情景仅仅是程序运行，输入一个文件，处理，输出，程序结束：而内部实现可能是多线程。要处理多个文件，需要同时启动多个程序。</p>
-<p>如果简单的用JNI调用，很可能会在并行调用时产生冲突，因为这种库会有大量的全局/静态变量，而没有任何线程同步操作，甚至不可能同步。</p>
-<p>简单的处理方法是把JNI函数加锁，即同一时刻一个库暴露出的所有函数至多只有一个调用。复杂的处理方法就是自己手动改代码，把所有全局/静态变量统计出来放在一个struct里，调用时new一个，调用结束时delete掉。</p>
-<p>当然如果对库的了解比较深的话可以改写的更优雅一些；如果库本身很复杂，改造起来很麻烦，那就直接加锁吧。</p>
-<h3 id="避免使用较高版本的glibc"><a href="#避免使用较高版本的glibc" class="headerlink" title="避免使用较高版本的glibc"></a>避免使用较高版本的glibc</h3><p>使用时发现由于线上机器的gilbc版本可能低于本地编译环境,而glibc升级非常麻烦且会引起一系列问题,所以尽量避免使用较高版本glibc提供的函数</p>
-<p>一种避免使用较高版本glibc的办法见(Linux程序兼容),适用于低版本glibc也有此函数的情况</p>
-<ul>
-<li>查看线上环境支持的glibc版本 <code>strings /lib64/libc.so.6 | grep GLIBC_</code></li>
-<li>查看编译出来的二进制库/程序引用的glibc版本,检查有无冲突,及冲突的glibc版本 <code>readelf -s $libname | grep -oP “GLIBC_[\d.]*” | sort | uniq</code></li>
-<li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
-<li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
-</ul>
 
         
       
@@ -485,6 +557,115 @@
 <h2 id="导入CLion"><a href="#导入CLion" class="headerlink" title="导入CLion"></a>导入CLion</h2><figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">cmake_minimum_required(VERSION 3.4.1)</span><br><span class="line">project(jdk7u CXX)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_CXX_STANDARD 11)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_VERBOSE_MAKEFILE 1)</span><br><span class="line"></span><br><span class="line">add_custom_target(gamma</span><br><span class="line">        WORKING_DIRECTORY <span class="variable">$&#123;CMAKE_CURRENT_SOURCE_DIR&#125;</span>)</span><br></pre></td></tr></table></figure>
 
 <p>启动clion之前需要把刚才那一堆环境变量搞进去，在执行前还需要把JVM环境变量设置好。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/jni/" class="post-title-link" itemprop="url">JNI使用中的一些注意事项</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:41:05" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。</p>
+<h3 id="内存模型和参数传递"><a href="#内存模型和参数传递" class="headerlink" title="内存模型和参数传递"></a>内存模型和参数传递</h3><p>比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直接用参数传过来。如果数据量比较大，或者不是基本类型，可能需要用byte[]传。如果数据量巨大，只能用文件等形式传递了。个人目前处理的文件一般是不超过20MB的小文件，因此选择第二种方式传递参数（虽然数据在heap区和native区来回复制也有一定代价），不过好在数据量不是很大，可以接受——另外一个使用byte[]而非DirectByteBuffer的重要原因是我还是有可能会用java代码来处理数据，而java处理DirectByteBuffer有时候很麻烦。。如果是非常大的文件（比如视频文件），使用临时文件/DirectBuffer更好一些。</p>
+<p>流数据的处理更复杂一些。现在似乎没有非常方便的在本地代码中读InputStream等的方法（当然可以做到，比如使用<code>GetMethodID&amp;Call??Method</code>等），但我没试过这种方式——即使不考虑效率因素，在本地代码中调用JAVA方法也不是一个好选择，毕竟本地代码处理JAVA运行中的各种异常实在太复杂了。最好还是将数据预处理后，交由本地代码处理，本地代码尽量保持简洁。</p>
+<p>当然最重要的还是保证内存不泄漏，本地代码中new/malloc自不必说，记得在最后调用DeleteLocalRef、ReleaseByteArrayElements等函数释放JAVA对象的引用。</p>
+<h3 id="加载动态库"><a href="#加载动态库" class="headerlink" title="加载动态库"></a>加载动态库</h3><p>我用的是org.scijava:native-lib-loader。本质上调用的还是System.load，这个库的做法是将动态库extract提取到一个临时文件，然后System.load()，不想引入新的库的话可以自己手动实现一下。</p>
+<h3 id="编译和调试"><a href="#编译和调试" class="headerlink" title="编译和调试"></a>编译和调试</h3><p>首先编译环境最好和目标运行环境一致，否则可能会出现各种意想不到的状况，比如系统库版本不兼容等。</p>
+<p>如果是自己重新写一个库可以规避掉很多问题。我遇到的情况通常是需要改写现有的库的接口，方便JAVA调用，那么至少需要</p>
+<ul>
+<li>修改源代码，暴露出可供调用的JNI外部函数</li>
+<li>改写MakeFile/CMakeLists，将原本的可执行文件编译为动态链接库</li>
+</ul>
+<p>只调试本地代码相对简单，但有些错误只有带JAVA调用时才会出现。我使用的IDE是CLion，暂时没找到比较方便的调试方法，目前的做法是加上DEBUG参数编译动态库后，</p>
+<ol>
+<li>在调用native方法前打个断点，运行至断点</li>
+<li>找到java进程的ID（ps，jps或者在程序里打印出来）</li>
+<li>CLion中Run - Attach to Local Process，选择对应的PID，在要调试的地方打断点</li>
+<li>继续java进程，进入本地代码中的断点，开始调试</li>
+</ol>
+<p>尽管GDB Remote Debug可以远程调试，但似乎不支持远程调试JNI？</p>
+<h3 id="代码编写时的注意事项"><a href="#代码编写时的注意事项" class="headerlink" title="代码编写时的注意事项"></a>代码编写时的注意事项</h3><ol>
+<li>很多库实现时只支持FILE<em>，改写为读内存很麻烦。这里推荐fmemopen和open_memstream，可以将数组转变为FILE</em>。</li>
+<li>很多C/C++代码逻辑中没有异常处理，我个人也不建议使用throw/catch。但JAVA中使用异常捕捉机制会方便很多，且有时候本地代码中遇到错误时也需要把异常信息传给java进程，那么在C/C++代码运行结束且发现运行出错时，手动抛出一个JAVA异常（调用(*env)-&gt;ThrowNew()），可能是一个比较好的风格。</li>
+</ol>
+<h3 id="线程安全"><a href="#线程安全" class="headerlink" title="线程安全"></a>线程安全</h3><p>有些库可能只支持单线程，或者可能最初设计的情景仅仅是程序运行，输入一个文件，处理，输出，程序结束：而内部实现可能是多线程。要处理多个文件，需要同时启动多个程序。</p>
+<p>如果简单的用JNI调用，很可能会在并行调用时产生冲突，因为这种库会有大量的全局/静态变量，而没有任何线程同步操作，甚至不可能同步。</p>
+<p>简单的处理方法是把JNI函数加锁，即同一时刻一个库暴露出的所有函数至多只有一个调用。复杂的处理方法就是自己手动改代码，把所有全局/静态变量统计出来放在一个struct里，调用时new一个，调用结束时delete掉。</p>
+<p>当然如果对库的了解比较深的话可以改写的更优雅一些；如果库本身很复杂，改造起来很麻烦，那就直接加锁吧。</p>
+<h3 id="避免使用较高版本的glibc"><a href="#避免使用较高版本的glibc" class="headerlink" title="避免使用较高版本的glibc"></a>避免使用较高版本的glibc</h3><p>使用时发现由于线上机器的gilbc版本可能低于本地编译环境,而glibc升级非常麻烦且会引起一系列问题,所以尽量避免使用较高版本glibc提供的函数</p>
+<p>一种避免使用较高版本glibc的办法见(Linux程序兼容),适用于低版本glibc也有此函数的情况</p>
+<ul>
+<li>查看线上环境支持的glibc版本 <code>strings /lib64/libc.so.6 | grep GLIBC_</code></li>
+<li>查看编译出来的二进制库/程序引用的glibc版本,检查有无冲突,及冲突的glibc版本 <code>readelf -s $libname | grep -oP “GLIBC_[\d.]*” | sort | uniq</code></li>
+<li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
+<li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
+</ul>
 
         
       
@@ -705,7 +886,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">25</span>
+          <span class="site-state-item-count">27</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -770,7 +951,11 @@
         
           
         
-        <span class="site-state-item-count">27</span>
+          
+        
+          
+        
+        <span class="site-state-item-count">29</span>
         <span class="site-state-item-name">tags</span>
         
       </div>

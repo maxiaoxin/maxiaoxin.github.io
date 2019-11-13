@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="最近发现BulkLoad这个好东西，记录一下 简单来说，正常的HBase写操作需要先经过Region Server，再通过一系列复杂操作后才会生成HFile并落盘（比如写WAL、flush、split等），进而生效。由于hbase的一个具体的region server是单点的，如果某个作业的写入量较大，很可能会把region server打爆。而我们知道，HBase持久化是通过HFile保存的，那">
+<meta name="keywords" content="BulkLoad,HBase">
+<meta property="og:type" content="article">
+<meta property="og:title" content="HBase BulkLoad简单用法">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/11/12/hbase-buckload/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="最近发现BulkLoad这个好东西，记录一下 简单来说，正常的HBase写操作需要先经过Region Server，再通过一系列复杂操作后才会生成HFile并落盘（比如写WAL、flush、split等），进而生效。由于hbase的一个具体的region server是单点的，如果某个作业的写入量较大，很可能会把region server打爆。而我们知道，HBase持久化是通过HFile保存的，那">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-11-12T07:42:23.124Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="HBase BulkLoad简单用法">
+<meta name="twitter:description" content="最近发现BulkLoad这个好东西，记录一下 简单来说，正常的HBase写操作需要先经过Region Server，再通过一系列复杂操作后才会生成HFile并落盘（比如写WAL、flush、split等），进而生效。由于hbase的一个具体的region server是单点的，如果某个作业的写入量较大，很可能会把region server打爆。而我们知道，HBase持久化是通过HFile保存的，那">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/11/12/hbase-buckload/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>HBase BulkLoad简单用法 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/12/hbase-buckload/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">HBase BulkLoad简单用法
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-11-12 00:00:00 / Modified: 15:42:23" itemprop="dateCreated datePublished" datetime="2019-11-12T00:00:00+08:00">2019-11-12</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>最近发现BulkLoad这个好东西，记录一下</p>
+<p>简单来说，正常的HBase写操作需要先经过Region Server，再通过一系列复杂操作后才会生成HFile并落盘（比如写WAL、flush、split等），进而生效。由于hbase的一个具体的region server是单点的，如果某个作业的写入量较大，很可能会把region server打爆。而我们知道，HBase持久化是通过HFile保存的，那么反过来，如果把写操作聚合成为一个HFile，再让hbase去加载这个hfile，那么就完成了写入操作，这样做可以省下大量的region server操作，降低负载，这个操作称为bulkload。</p>
+<p>Bulkload大致步骤包括：</p>
+<ol>
+<li>生成要处理的数据。至于如何生成、生成什么格式得看具体场景，但无论如何，需要能被接下来的mapreduce作业访问到</li>
+<li>提交一个mapreduce作业，这个作业需要读取步骤1中生成的数据，并转换为HFile。这个HFile一般可以放在hbase所在hdfs集群上的某个临时目录下面</li>
+<li>令hbase加载步骤2生成的HFile</li>
+</ol>
+<p>网上大多数教程是讲如何导入数据，那么这里就讲讲如何批量删除数据。假设我们要删的数据保存在<code>/tmp/input.txt</code>里，以每行写一个timestamp和一个key：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">1573542224666,test157354-1958983957411631613/hello-00000</span><br><span class="line">1573542224674,test157354-1958983957411631613/hello-00001</span><br><span class="line">1573542224680,test157354-1958983957411631613/hello-00002</span><br><span class="line">1573542224687,test157354-1958983957411631613/hello-00003</span><br><span class="line">1573542224693,test157354-1958983957411631613/hello-00004</span><br><span class="line">1573542224700,test157354-1958983957411631613/hello-00005</span><br><span class="line">1573542224707,test157354-1958983957411631613/hello-00006</span><br><span class="line">1573542224713,test157354-1958983957411631613/hello-00007</span><br><span class="line">1573542224724,test157354-1958983957411631613/hello-00008</span><br><span class="line">1573542224730,test157354-1958983957411631613/hello-00009</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>接下来要写一个mapper，将一行数据转换为KeyValue</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">static</span> <span class="class"><span class="keyword">class</span> <span class="title">DeleteMapper</span> <span class="keyword">extends</span> <span class="title">Mapper</span>&lt;<span class="title">LongWritable</span>, <span class="title">Text</span>, <span class="title">ImmutableBytesWritable</span>, <span class="title">KeyValue</span>&gt;</span>&#123;</span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="function"><span class="keyword">protected</span> <span class="keyword">void</span> <span class="title">map</span><span class="params">(LongWritable key, Text value, Context context)</span> <span class="keyword">throws</span> IOException, InterruptedException </span>&#123;</span><br><span class="line">      String[] tokens = value.toString().split(<span class="string">","</span>, <span class="number">2</span>);</span><br><span class="line">      <span class="keyword">long</span> ts = Long.parseLong(tokens[<span class="number">0</span>]);</span><br><span class="line">      String rowKey = tokens[<span class="number">1</span>];</span><br><span class="line"></span><br><span class="line">      Delete delete = <span class="keyword">new</span> Delete(rowKey.getBytes());</span><br><span class="line">      delete.deleteFamily(FAMILY_TO_BE_DELETE, ts);</span><br><span class="line"></span><br><span class="line">      ImmutableBytesWritable row = <span class="keyword">new</span> ImmutableBytesWritable(rowKey.getBytes());</span><br><span class="line">      <span class="keyword">for</span> (List&lt;Cell&gt; cells : delete.getFamilyCellMap().values())&#123;</span><br><span class="line">        <span class="keyword">for</span> (Cell cell : cells)&#123;</span><br><span class="line">          KeyValue kv = KeyValueUtil.ensureKeyValue(cell);</span><br><span class="line">          context.write(row, kv);</span><br><span class="line">        &#125;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>注意这里需要自己将Delete转换为KeyValue。如果是正常写数据，直接将mapper的输出类设为Put就行</p>
+<p>然后初始化并启动一个mapreduce job。其核心在于<code>HFileOutputFormat2.configureIncrementalLoad()</code>，这个方法会进一步设置一些job的属性，比如各种输入输出类型。有兴趣的话可以看看源码，如果不满意可以自行修改</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">Path filePath = <span class="keyword">new</span> Path(<span class="string">"file:///tmp/input.txt"</span>);</span><br><span class="line">Path hfilePath = <span class="keyword">new</span> Path(<span class="string">"/tmp/"</span> + tableName + <span class="string">"/"</span> + UUID.randomUUID().toString());</span><br><span class="line">Job job = Job.getInstance(conf, <span class="string">"bulkLoad"</span>);</span><br><span class="line">job.setJarByClass(DeleteMapper.class);</span><br><span class="line">job.setMapperClass(DeleteMapper.class);</span><br><span class="line">HTable table = getHTable(tableName);</span><br><span class="line">HFileOutputFormat2.configureIncrementalLoad(job, table);</span><br><span class="line">FileInputFormat.addInputPath(job, filePath);</span><br><span class="line">FileOutputFormat.setOutputPath(job, hfilePath);</span><br><span class="line">job.waitForCompletion(<span class="keyword">true</span>);</span><br></pre></td></tr></table></figure>
+
+<p>如果job能正常运行，那么会在<code>&quot;/tmp/&quot; + tableName + &quot;/&quot; + UUID.randomUUID().toString()</code>下生成一些HFile。最后加载这些HFile，最好在加载完后把HFile删掉</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">LoadIncrementalHFiles loadFiles = <span class="keyword">new</span> LoadIncrementalHFiles(conf);</span><br><span class="line">HTable table = getHTable(tableName);</span><br><span class="line">loadFiles.doBulkLoad(hfilePath, table);</span><br></pre></td></tr></table></figure>
+
+<p>实际上现在很多hbase的操作都是想办法直接操作HFile而非直接访问region server，从而降低对线上服务的影响。目前没有在启用hbase加密的集群上试过，据说因为加解密是在region server上完成的，那么估计就不能用这种方式了。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/BulkLoad/" rel="tag"># BulkLoad</a>
+            
+              <a href="/tags/HBase/" rel="tag"># HBase</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/11/09/redis-read6/" rel="next" title="redis学习（6）事件">
+                  <i class="fa fa-chevron-left"></i> redis学习（6）事件
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">27</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">29</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
