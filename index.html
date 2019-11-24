@@ -220,11 +220,19 @@
                 
               
 
-              <time title="Created: 2019-11-12 00:00:00 / Modified: 15:42:23" itemprop="dateCreated datePublished" datetime="2019-11-12T00:00:00+08:00">2019-11-12</time>
+              <time title="Created: 2019-11-12 00:00:00" itemprop="dateCreated datePublished" datetime="2019-11-12T00:00:00+08:00">2019-11-12</time>
             </span>
           
             
 
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-11-24 20:12:53" itemprop="dateModified" datetime="2019-11-24T20:12:53+08:00">2019-11-24</time>
+              </span>
             
           
 
@@ -239,7 +247,15 @@
     <div class="post-body" itemprop="articleBody">
 
       
-          <p>最近发现BulkLoad这个好东西，记录一下</p>
+          <p>再更新一下，之前介绍的搞法会需要先通过MR作业生成一些HFile文件，但其实不一定需要用MR完成。这点可以看<code>HFileOutputFormat2.class</code>的源码，其中写HFile的核心是<code>createRecordWriter()</code>，而这个方法其实并没有用到MR作业的任何特性。</p>
+<p>那么就可以自己手动把这段代码提取出来，生成一个类似<code>RecordWriter&lt;ImmutableBytesWritable, Cell&gt;</code>的类，这样可以直接在本地（或者别的什么地方）生成HFile。因此流程可以进一步简化为：</p>
+<ol>
+<li>直接将要写入的数据写入HFile</li>
+<li>令hbase加载生成的HFile</li>
+</ol>
+<p>当然这个类是不是线程安全的我就不太清楚了，建议用之前加个锁，或者再优化一下代码</p>
+<hr>
+<p>最近发现BulkLoad这个好东西，记录一下</p>
 <p>简单来说，正常的HBase写操作需要先经过Region Server，再通过一系列复杂操作后才会生成HFile并落盘（比如写WAL、flush、split等），进而生效。由于hbase的一个具体的region server是单点的，如果某个作业的写入量较大，很可能会把region server打爆。而我们知道，HBase持久化是通过HFile保存的，那么反过来，如果把写操作聚合成为一个HFile，再让hbase去加载这个hfile，那么就完成了写入操作，这样做可以省下大量的region server操作，降低负载，这个操作称为bulkload。</p>
 <p>Bulkload大致步骤包括：</p>
 <ol>
