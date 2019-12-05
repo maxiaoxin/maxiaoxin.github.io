@@ -54,19 +54,19 @@
   };
 </script>
 
-  <meta name="description" content="前几天同事分享了一个巨流弊的工具Arthas，可以在线上花式调试/监控JVM上的代码运行状况，excited!这里记录几个常用命令。 启动命令: wget https://alibaba.github.io/arthas/arthas-boot.jar &amp;amp;&amp;amp; java -jar arthas-boot.jar dashboard就是dashboard watch流弊！watch可以">
-<meta name="keywords" content="JAVA,Arthas">
+  <meta name="description" content="这段时间被bulkload搞的头大，记录一些问题： HFile权限问题HBase执行bulkload时需要对应HFile目录的读写权限。网上通用做法是递归chmod相关目录，感觉比较麻烦。 最好在临时文件所在的根目录为hbase用户增加default acl，并且要在hdfs-site.xml中增加fs.permissions.umask-mode=000这一项 默认的fs.permissions">
+<meta name="keywords" content="BulkLoad,HBase">
 <meta property="og:type" content="article">
-<meta property="og:title" content="阿里Arthas学习">
-<meta property="og:url" content="https://maxiaoxin.github.io/2019/08/23/arthas/index.html">
+<meta property="og:title" content="记录一下HBase BulkLoad使用过程中遇到的坑">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/12/05/hbase-buckload2/index.html">
 <meta property="og:site_name" content="读书笔记">
-<meta property="og:description" content="前几天同事分享了一个巨流弊的工具Arthas，可以在线上花式调试/监控JVM上的代码运行状况，excited!这里记录几个常用命令。 启动命令: wget https://alibaba.github.io/arthas/arthas-boot.jar &amp;amp;&amp;amp; java -jar arthas-boot.jar dashboard就是dashboard watch流弊！watch可以">
+<meta property="og:description" content="这段时间被bulkload搞的头大，记录一些问题： HFile权限问题HBase执行bulkload时需要对应HFile目录的读写权限。网上通用做法是递归chmod相关目录，感觉比较麻烦。 最好在临时文件所在的根目录为hbase用户增加default acl，并且要在hdfs-site.xml中增加fs.permissions.umask-mode=000这一项 默认的fs.permissions">
 <meta property="og:locale" content="cn">
-<meta property="og:updated_time" content="2019-08-23T08:51:04.354Z">
+<meta property="og:updated_time" content="2019-12-05T14:42:58.734Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="阿里Arthas学习">
-<meta name="twitter:description" content="前几天同事分享了一个巨流弊的工具Arthas，可以在线上花式调试/监控JVM上的代码运行状况，excited!这里记录几个常用命令。 启动命令: wget https://alibaba.github.io/arthas/arthas-boot.jar &amp;amp;&amp;amp; java -jar arthas-boot.jar dashboard就是dashboard watch流弊！watch可以">
-  <link rel="canonical" href="https://maxiaoxin.github.io/2019/08/23/arthas/">
+<meta name="twitter:title" content="记录一下HBase BulkLoad使用过程中遇到的坑">
+<meta name="twitter:description" content="这段时间被bulkload搞的头大，记录一些问题： HFile权限问题HBase执行bulkload时需要对应HFile目录的读写权限。网上通用做法是递归chmod相关目录，感觉比较麻烦。 最好在临时文件所在的根目录为hbase用户增加default acl，并且要在hdfs-site.xml中增加fs.permissions.umask-mode=000这一项 默认的fs.permissions">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/12/05/hbase-buckload2/">
 
 
 <script id="page-configurations">
@@ -80,7 +80,7 @@
   };
 </script>
 
-  <title>阿里Arthas学习 | 读书笔记</title>
+  <title>记录一下HBase BulkLoad使用过程中遇到的坑 | 读书笔记</title>
   <meta name="generator" content="Hexo 3.9.0">
   
 
@@ -196,7 +196,7 @@
   
   
   <div class="post-block post">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/arthas/">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/12/05/hbase-buckload2/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="name" content="maxiaoxin">
@@ -208,7 +208,7 @@
       <meta itemprop="name" content="读书笔记">
     </span>
       <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">阿里Arthas学习
+        <h1 class="post-title" itemprop="name headline">记录一下HBase BulkLoad使用过程中遇到的坑
 
           
         </h1>
@@ -224,7 +224,7 @@
                 
               
 
-              <time title="Created: 2019-08-23 00:00:01 / Modified: 16:51:04" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:01+08:00">2019-08-23</time>
+              <time title="Created: 2019-12-05 00:00:00 / Modified: 22:42:58" itemprop="dateCreated datePublished" datetime="2019-12-05T00:00:00+08:00">2019-12-05</time>
             </span>
           
             
@@ -243,22 +243,20 @@
     <div class="post-body" itemprop="articleBody">
 
       
-        <p>前几天同事分享了一个巨流弊的工具<a href="https://alibaba.github.io/arthas/" target="_blank" rel="noopener">Arthas</a>，可以在线上花式调试/监控JVM上的代码运行状况，excited!这里记录几个常用命令。</p>
-<p>启动命令: <code>wget https://alibaba.github.io/arthas/arthas-boot.jar &amp;&amp; java -jar arthas-boot.jar</code></p>
-<h3 id="dashboard"><a href="#dashboard" class="headerlink" title="dashboard"></a>dashboard</h3><p>就是dashboard</p>
-<h3 id="watch"><a href="#watch" class="headerlink" title="watch"></a>watch</h3><p>流弊！watch可以监视某个方法的运行状况，但缺点是它不能像断点一样阻塞这个线程。一般调用方法为watch $class_name $method $watch_express $cond_express $flags, 其中观察表达式（watch_express）和条件表达式（cond_express）为<a href="https://commons.apache.org/proper/commons-ognl/language-guide.html" target="_blank" rel="noopener">OGNL表达式</a>，个人还不太会用，基本元素可以参考表达式核心变量。</p>
-<p>class_name需要把路径写全，某个类的子类要写成parentClass$subClass，用$符号隔开</p>
-<p>-b -e -s 分别表示在方法运行前、异常返回后、正常返回后监控。-f或者什么都不写表示返回后监控。</p>
-<p>-x表示观察递归深度。比如某个参数p有内部变量p1，p1有内部变量p2，那么要打印出p2，需要指定-x 3</p>
-<h3 id="sc"><a href="#sc" class="headerlink" title="sc"></a>sc</h3><p>查看JVM已加载的类信息</p>
-<h3 id="redefine"><a href="#redefine" class="headerlink" title="redefine"></a>redefine</h3><p>流弊！<a href="https://alibaba.github.io/arthas/redefine.html" target="_blank" rel="noopener">redefine</a>可以加载外部某个.class文件进jvm，redefine后的原来的类不能恢复，redefine有可能失败（比如增加了新的field），参考jdk本身的文档。有两个限制：</p>
-<ul>
-<li>不允许新增加field/method</li>
-<li>正在跑的函数，没有退出不能生效，比如下面新增加的System.out.println，只有run()函数里的会生效</li>
-</ul>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">MathGame</span> </span>&#123;</span><br><span class="line">    <span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> InterruptedException </span>&#123;</span><br><span class="line">        MathGame game = <span class="keyword">new</span> MathGame();</span><br><span class="line">        <span class="keyword">while</span> (<span class="keyword">true</span>) &#123;</span><br><span class="line">            game.run();</span><br><span class="line">            TimeUnit.SECONDS.sleep(<span class="number">1</span>);</span><br><span class="line">            <span class="comment">// 这个不生效，因为代码一直跑在 while里</span></span><br><span class="line">            System.out.println(<span class="string">"in loop"</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"> </span><br><span class="line">    <span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">run</span><span class="params">()</span> <span class="keyword">throws</span> InterruptedException </span>&#123;</span><br><span class="line">        <span class="comment">// 这个生效，因为run()函数每次都可以完整结束</span></span><br><span class="line">        System.out.println(<span class="string">"call run()"</span>);</span><br><span class="line">        <span class="keyword">try</span> &#123;</span><br><span class="line">            <span class="keyword">int</span> number = random.nextInt();</span><br><span class="line">            List&lt;Integer&gt; primeFactors = primeFactors(number);</span><br><span class="line">            print(number, primeFactors);</span><br><span class="line"> </span><br><span class="line">        &#125; <span class="keyword">catch</span> (Exception e) &#123;</span><br><span class="line">            System.out.println(String.format(<span class="string">"illegalArgumentCount:%3d, "</span>, illegalArgumentCount) + e.getMessage());</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
-
-<p>简单来说可以不用每次修改完后重新打包-上传-重启了。</p>
+        <p>这段时间被bulkload搞的头大，记录一些问题：</p>
+<h2 id="HFile权限问题"><a href="#HFile权限问题" class="headerlink" title="HFile权限问题"></a>HFile权限问题</h2><p>HBase执行bulkload时需要对应HFile目录的读写权限。网上通用做法是递归<code>chmod</code>相关目录，感觉比较麻烦。</p>
+<p>最好在临时文件所在的根目录为hbase用户增加default acl，并且要在<code>hdfs-site.xml</code>中增加<code>fs.permissions.umask-mode=000</code>这一项</p>
+<p>默认的<code>fs.permissions.umask-mode</code>应该是022，这会导致新创建子目录的mask为’r-x’，hbase用户写操作失败。</p>
+<h2 id="HBase的hadoop-client版本需要与hdfs版本相对应"><a href="#HBase的hadoop-client版本需要与hdfs版本相对应" class="headerlink" title="HBase的hadoop-client版本需要与hdfs版本相对应"></a>HBase的hadoop-client版本需要与hdfs版本相对应</h2><p>由于hbase region server需要加载HFile，即会去读写相关HFile文件，因此hadoop-client和hdfs版本不匹配会出现一些奇奇怪怪的问题。</p>
+<p>我遇到的情况是2.6版本的<code>hadoop-client</code>访问2.4的hdfs会报权限错。但奇怪的是如果hbase访问hdfs有问题，那么region server根本不应该能跑起来，只能说是玄学。</p>
+<h2 id="生成不同table的HFILE"><a href="#生成不同table的HFILE" class="headerlink" title="生成不同table的HFILE"></a>生成不同table的HFILE</h2><p>貌似<code>HFileOutputFormat2</code>只支持对于单表生成数据，那么如果需要通过某一过程同时生成两个以上表的HFILE就不能直接用了。最典型的例子是从表A把数据挪动到表B，再把表A数据删除。个人做法还是把<code>createRecordWriter()</code>方法抽取出来，毕竟自己通过<code>HFileWriter</code>去写，万一出问题了呢。</p>
+<p>这里推荐一个博文<a href="http://www.zhangrenhua.com/2016/01/28/hadoop-Hbase%E5%BF%AB%E9%80%9F%E5%86%99%E5%85%A5%E8%A7%A3%E6%83%91%E4%B9%8BHFile/" target="_blank" rel="noopener">Hbase快速写入解惑之HFile</a>，里面有一个简单的本地生成HFile的例子。跑MapReduce的时候也可以参考</p>
+<p>但本地生成的HFile，还需要再copy到HBase所在的HDFS集群的某个目录下，再执行<code>doBulkLoad()</code></p>
+<p>这里有另一个问题是如果通过mapreduce作业生成HFile时，需不需要通过reduce来生成HFile。个人感觉还是自己控制会方便一点，建议把reduce num置为0，然后在map过程中将数据写入对应目录的不同taskId的子目录下，最后bulkload。</p>
+<h2 id="写入HFile的时候需要保证KeyValue按字典序排序"><a href="#写入HFile的时候需要保证KeyValue按字典序排序" class="headerlink" title="写入HFile的时候需要保证KeyValue按字典序排序"></a>写入HFile的时候需要保证KeyValue按字典序排序</h2><p>比如要写1000行数据，每行有50个KeyValue，那么这50000个KeyValue都必须按字典序排序。</p>
+<p>只使用<code>HFileOutputFormat2</code>的话不需要注意这一点，它会自动排序。</p>
+<h2 id="尽量利用timestamp进行同步"><a href="#尽量利用timestamp进行同步" class="headerlink" title="尽量利用timestamp进行同步"></a>尽量利用timestamp进行同步</h2><p>由于绕开了RS，我们在写数据的时候无法通过CAS判断是否应当写入，那么timestamp就成了数据同步依据的唯一选择，但怎么用timestamp还得看具体情况</p>
+<p>设t0&lt;t1&lt;t2，t0时刻我们决定清空比较早期的用户记录，如果扫表和生成HFile的时间很长，而用户t1时刻增加了记录，不指定deleteMarker的timestamp的话，在t2时刻进行bulkload时会删除这条记录，这显然是违背业务逻辑的</p>
 
     </div>
 
@@ -274,9 +272,9 @@
           
           <div class="post-tags">
             
-              <a href="/tags/JAVA/" rel="tag"># JAVA</a>
+              <a href="/tags/BulkLoad/" rel="tag"># BulkLoad</a>
             
-              <a href="/tags/Arthas/" rel="tag"># Arthas</a>
+              <a href="/tags/HBase/" rel="tag"># HBase</a>
             
           </div>
         
@@ -286,8 +284,8 @@
           <div class="post-nav">
             <div class="post-nav-next post-nav-item">
               
-                <a href="/2019/08/23/cheat1/" rel="next" title="页游辅助思路">
-                  <i class="fa fa-chevron-left"></i> 页游辅助思路
+                <a href="/2019/11/12/hbase-buckload/" rel="next" title="HBase BulkLoad简单用法">
+                  <i class="fa fa-chevron-left"></i> HBase BulkLoad简单用法
                 </a>
               
             </div>
@@ -295,10 +293,6 @@
             <span class="post-nav-divider"></span>
 
             <div class="post-nav-prev post-nav-item">
-              
-                <a href="/2019/08/23/jvm2/" rel="prev" title="JVM学习（2）JVM内存布局">
-                  JVM学习（2）JVM内存布局 <i class="fa fa-chevron-right"></i>
-                </a>
               
             </div>
           </div>
@@ -347,7 +341,7 @@
 
       <!--noindex-->
       <div class="post-toc-wrap sidebar-panel">
-          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-3"><a class="nav-link" href="#dashboard"><span class="nav-number">1.</span> <span class="nav-text">dashboard</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#watch"><span class="nav-number">2.</span> <span class="nav-text">watch</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#sc"><span class="nav-number">3.</span> <span class="nav-text">sc</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#redefine"><span class="nav-number">4.</span> <span class="nav-text">redefine</span></a></li></ol></div>
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#HFile权限问题"><span class="nav-number">1.</span> <span class="nav-text">HFile权限问题</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#HBase的hadoop-client版本需要与hdfs版本相对应"><span class="nav-number">2.</span> <span class="nav-text">HBase的hadoop-client版本需要与hdfs版本相对应</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#生成不同table的HFILE"><span class="nav-number">3.</span> <span class="nav-text">生成不同table的HFILE</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#写入HFile的时候需要保证KeyValue按字典序排序"><span class="nav-number">4.</span> <span class="nav-text">写入HFile的时候需要保证KeyValue按字典序排序</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#尽量利用timestamp进行同步"><span class="nav-number">5.</span> <span class="nav-text">尽量利用timestamp进行同步</span></a></li></ol></div>
         
       </div>
       <!--/noindex-->
