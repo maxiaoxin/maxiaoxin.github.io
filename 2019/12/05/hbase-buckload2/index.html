@@ -62,7 +62,7 @@
 <meta property="og:site_name" content="读书笔记">
 <meta property="og:description" content="这段时间被bulkload搞的头大，记录一些问题： HFile权限问题HBase执行bulkload时需要对应HFile目录的读写权限。网上通用做法是递归chmod相关目录，感觉比较麻烦。 最好在临时文件所在的根目录为hbase用户增加default acl，并且要在hdfs-site.xml中增加fs.permissions.umask-mode=000这一项 默认的fs.permissions">
 <meta property="og:locale" content="cn">
-<meta property="og:updated_time" content="2019-12-05T14:42:58.734Z">
+<meta property="og:updated_time" content="2019-12-06T02:49:08.230Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="记录一下HBase BulkLoad使用过程中遇到的坑">
 <meta name="twitter:description" content="这段时间被bulkload搞的头大，记录一些问题： HFile权限问题HBase执行bulkload时需要对应HFile目录的读写权限。网上通用做法是递归chmod相关目录，感觉比较麻烦。 最好在临时文件所在的根目录为hbase用户增加default acl，并且要在hdfs-site.xml中增加fs.permissions.umask-mode=000这一项 默认的fs.permissions">
@@ -224,11 +224,19 @@
                 
               
 
-              <time title="Created: 2019-12-05 00:00:00 / Modified: 22:42:58" itemprop="dateCreated datePublished" datetime="2019-12-05T00:00:00+08:00">2019-12-05</time>
+              <time title="Created: 2019-12-05 00:00:00" itemprop="dateCreated datePublished" datetime="2019-12-05T00:00:00+08:00">2019-12-05</time>
             </span>
           
             
 
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-12-06 10:49:08" itemprop="dateModified" datetime="2019-12-06T10:49:08+08:00">2019-12-06</time>
+              </span>
             
           
 
@@ -257,6 +265,7 @@
 <p>只使用<code>HFileOutputFormat2</code>的话不需要注意这一点，它会自动排序。</p>
 <h2 id="尽量利用timestamp进行同步"><a href="#尽量利用timestamp进行同步" class="headerlink" title="尽量利用timestamp进行同步"></a>尽量利用timestamp进行同步</h2><p>由于绕开了RS，我们在写数据的时候无法通过CAS判断是否应当写入，那么timestamp就成了数据同步依据的唯一选择，但怎么用timestamp还得看具体情况</p>
 <p>设t0&lt;t1&lt;t2，t0时刻我们决定清空比较早期的用户记录，如果扫表和生成HFile的时间很长，而用户t1时刻增加了记录，不指定deleteMarker的timestamp的话，在t2时刻进行bulkload时会删除这条记录，这显然是违背业务逻辑的</p>
+<p>说起来为了时间戳同步这事还改动了其他模块的部分处理逻辑，真是肝疼。比如HBase timestamp有一个坑是，你可以在修改时指定一个时间戳去改，假如每次指定的timestamp相同，那么你有可能改成功。但如果某次操作是以相同timestamp写一个deleteMarker进去，那么之后再以相同时间戳写入就会失败（一直是deleteMarker），直到hbase执行compact。这个问题会导致我们不方便把一个timestamp分配给某个具体业务，以此为依据进行数据的增删改查——当然了，如果某个timestamp被置为deleteMarker，那么比这个timestamp更小的数据就有可能被compact掉。</p>
 
     </div>
 
