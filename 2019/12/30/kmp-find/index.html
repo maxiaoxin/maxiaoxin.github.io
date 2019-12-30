@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="KMP算法是一个比较经典的字串搜索算法，相信学过一点算法的都知道。我一直觉得KMP算法理解起来非常反人类，尤其是我这种脑子比较轴的人，所以这里用NFA来解释KMP算法。leetcode原题在实现 strStr()。 NFA模拟字符串匹配如何用状态机来模拟字串搜索呢？假设目标串为S=&amp;quot;aabaabbcaabbccc&amp;quot;，模式串为P=&amp;quot;aabbcaab&amp;quot;，那么就可">
+<meta name="keywords" content="KMP,NFA,leetcode">
+<meta property="og:type" content="article">
+<meta property="og:title" content="用NFA解释KMP算法">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/12/30/kmp-find/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="KMP算法是一个比较经典的字串搜索算法，相信学过一点算法的都知道。我一直觉得KMP算法理解起来非常反人类，尤其是我这种脑子比较轴的人，所以这里用NFA来解释KMP算法。leetcode原题在实现 strStr()。 NFA模拟字符串匹配如何用状态机来模拟字串搜索呢？假设目标串为S=&amp;quot;aabaabbcaabbccc&amp;quot;，模式串为P=&amp;quot;aabbcaab&amp;quot;，那么就可">
+<meta property="og:locale" content="cn">
+<meta property="og:updated_time" content="2019-12-30T12:55:16.539Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="用NFA解释KMP算法">
+<meta name="twitter:description" content="KMP算法是一个比较经典的字串搜索算法，相信学过一点算法的都知道。我一直觉得KMP算法理解起来非常反人类，尤其是我这种脑子比较轴的人，所以这里用NFA来解释KMP算法。leetcode原题在实现 strStr()。 NFA模拟字符串匹配如何用状态机来模拟字串搜索呢？假设目标串为S=&amp;quot;aabaabbcaabbccc&amp;quot;，模式串为P=&amp;quot;aabbcaab&amp;quot;，那么就可">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/12/30/kmp-find/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>用NFA解释KMP算法 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/12/30/kmp-find/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">用NFA解释KMP算法
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-12-30 00:00:00 / Modified: 20:55:16" itemprop="dateCreated datePublished" datetime="2019-12-30T00:00:00+08:00">2019-12-30</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p><a href="https://zh.wikipedia.org/wiki/克努斯-莫里斯-普拉特算法" target="_blank" rel="noopener">KMP算法</a>是一个比较经典的字串搜索算法，相信学过一点算法的都知道。我一直觉得KMP算法理解起来非常反人类，尤其是我这种脑子比较轴的人，所以这里用NFA来解释KMP算法。leetcode原题在<a href="https://leetcode-cn.com/problems/implement-strstr/submissions/" target="_blank" rel="noopener">实现 strStr()</a>。</p>
+<h2 id="NFA模拟字符串匹配"><a href="#NFA模拟字符串匹配" class="headerlink" title="NFA模拟字符串匹配"></a>NFA模拟字符串匹配</h2><p>如何用状态机来模拟字串搜索呢？假设目标串为<code>S=&quot;aabaabbcaabbccc&quot;</code>，模式串为<code>P=&quot;aabbcaab&quot;</code>，那么就可以制造这样一个NFA：</p>
+<p>0<ruby>→ <rt>a</rt></ruby>1<ruby>→ <rt>a</rt></ruby>2<ruby>→ <rt>b</rt></ruby>3<ruby>→ <rt>b</rt></ruby>4<ruby>→ <rt>c</rt></ruby>5<ruby>→ <rt>a</rt></ruby>6<ruby>→ <rt>a</rt></ruby>7<ruby>→ <rt>b</rt></ruby>8</p>
+<p>这里隐去了不成功的状态转移路径，所有未标注的状态转移路径都指向状态0，比如状态1在遇到非<code>a</code>的情况下应该跳转到0。</p>
+<p>然后维持一个不重复的状态集，每解析一个目标串的字符，就尝试将集合中所有状态按照这个字符向前转移一次，初始集合为<code>{0}</code>，且转移后都要重新加入状态0。当状态集合包含最终状态（这里是状态8）时，我们认为匹配成功，否则认为匹配失败。那么针对于这个匹配，我们的状态转移过程是：</p>
+<p>{0}<ruby>→ <rt>a</rt></ruby>{0,1}<ruby>→ <rt>a</rt></ruby>{0,1,2}<ruby>→ <rt>b</rt></ruby>{0,3}<ruby>→ <rt>a</rt></ruby>{0,1}<ruby>→ <rt>a</rt></ruby>{0,1,2}<ruby>→ <rt>b</rt></ruby>{0,3}<ruby>→ <rt>b</rt></ruby>{0,4}<ruby>→ <rt>c</rt></ruby>{0,5}<ruby>→ <rt>a</rt></ruby>{0,1,6}<ruby>→ <rt>a</rt></ruby>{0,1,2,7}<ruby>→ <rt>b</rt></ruby>{0,3,8}</p>
+<p>可见最终的状态集合包含了目标状态8，因此匹配成功。</p>
+<p>为什么可以用这样一个NFA来模拟字符串匹配过程？</p>
+<ol>
+<li>假设我们从目标串任意位置i开始，从初始集合{0}开始运行NFA，那么如果这个位置i与模式串匹配，那么最终一定会转移到最终状态，反之亦然</li>
+<li>因此我们可以从目标串所有位置开始同时运行同一个NFA，只要其中一个转移到了状态8，那么就说明转移成功</li>
+<li>由于所有初始集合均为{0}，而{0}是这些过程中任意集合的子集，且之后的状态转移路径完全相同，因此可以进行合并，即可以通过从前向后遍历目标串字符，并根据这些字符进行状态转移，就得到了同样的效果</li>
+</ol>
+<p>感觉说的不是特别清楚，有兴趣的可以看看编译原理。</p>
+<h2 id="NFA到DFA"><a href="#NFA到DFA" class="headerlink" title="NFA到DFA"></a>NFA到DFA</h2><p>带着一个状态集跑NFA也是一个选择，但似乎可以更简化一些，比如我们可以仿照NFA转DFA的原理来重新思考这个问题。NFA转DFA的原理大致是将NFA的状态集合看作DFA的一个状态，然后不停扩展DFA的状态集合，直至不再变化。不过这里有些细小的差别：新增的状态集合需要再加一个状态0。</p>
+<p>仍然以上面那个例子为例，</p>
+<ul>
+<li>{0}可以通过a转移到{0,1}，其他转移到{0}</li>
+<li>{0,1}可以通过a转移到{0,1,2}，其他转移到{0}</li>
+<li>{0,1,2}可以通过b转移到{0,3}，通过a转移到{0,1,2}，其他转移到{0}</li>
+<li>{0,3}可以通过b转移到{0,4}，通过a转移到{0,1}，其他转移到{0}</li>
+<li>{0,4}可以通过c转移到{0,5}，通过a转移到{0,1}，其他转移到{0}</li>
+<li>…</li>
+<li>{0,1,2,7}可以通过b转移到{0,3,8}，通过a转移到{0,1,2}，其他转移到{0}</li>
+</ul>
+<p>仔细观察这个扩展过程，有以下特点：</p>
+<ol>
+<li>每次都只会新增一个状态，且只和上一个状态集有关。比如{0,1,2}通过b转移到{0,3}，状态3由状态2而来，状态集{0,3}只和{0,1,2}有关</li>
+<li>假设上一个状态集合为[s<sub>0</sub>, s<sub>1</sub>, s<sub>k-1</sub>, s<sub>k</sub>]，[s<sub>0</sub>, s<sub>1</sub>, s<sub>k-1</sub>]一定已经处理过，且s<sub>k</sub>一定会通过P[s<sub>k</sub>]转移到新状态s<sub>k</sub>+1</li>
+<li>s<sub>k</sub>只能通过P[s<sub>k</sub>]转移到s<sub>k</sub>+1。对于非P[s<sub>k</sub>]的字符，s<sub>k</sub>只能转移到状态0，故状态集[s<sub>0</sub>, s<sub>1</sub>, s<sub>k-1</sub>, s<sub>k</sub>]遇到非P[s<sub>k</sub>]的字符的字符，转移后的状态集等同于状态集[s<sub>0</sub>, s<sub>1</sub>, s<sub>k-1</sub>]遇到相同字符转移后的状态集，且这个状态集一定已经处理过（证明起来比较麻烦，可以试试用数学归纳法）</li>
+</ol>
+<p>因此我们可以用状态s<sub>k</sub>来唯一指代状态集合[s<sub>0</sub>, s<sub>1</sub>, s<sub>k-1</sub>, s<sub>k</sub>]，且状态子集[s<sub>0</sub>, s<sub>1</sub>, s<sub>k-1</sub>]由状态s<sub>k-1</sub>唯一指定。换言之，可以记录一个数组prev，顺着这个数组，就能从状态s<sub>k</sub>找到全部的[s<sub>0</sub>, s<sub>1</sub>, s<sub>k-1</sub>, s<sub>k</sub>]。</p>
+<p>那么如何来求prev呢？还是按照NFA转DFA中的扩展思路，假设对于状态s<sub>k</sub>，它所指代的状态集合为{s<sub>k</sub>,s<sub>k-1</sub>,…,s<sub>1</sub>,s<sub>0</sub>}={s<sub>k</sub>, prev[s<sub>k</sub>], prev[prev[s<sub>k</sub>]], …, 0}，其中s<sub>k</sub>可以通过P[s<sub>k</sub>]转移到s<sub>k</sub>+1，那接下来的问题就在于prev[s<sub>k</sub>], prev[prev[s<sub>k</sub>]], …, 0能通过P[s<sub>k</sub>]转移到哪。考虑其中的一个状态s<sub>m</sub>，有</p>
+<ul>
+<li>如果P[s<sub>m</sub>]==P[s<sub>k</sub>]，则s<sub>m</sub>可以通过P[s<sub>k</sub>]转移到s<sub>m</sub>+1，否则转移到0</li>
+<li>假设s<sub>m</sub>可以通过P[s<sub>k</sub>]转移到s<sub>m</sub>+1，而s<sub>m</sub>+1已经被处理过，那么prev[s<sub>m</sub>]也可以通过P[s<sub>k</sub>]转移到prev[s<sub>m</sub>]+1，且prev[s<sub>m</sub>]+1==prev[s<sub>m</sub>+1]。这还是由于新状态只能由特定字符转换而来导致的。</li>
+</ul>
+<p>还是拿上面那个举例，已知prev[{1,2,3,4,5,6}]={0,1,0,0,0,1}，也就是已经计算得到状态6了，现在要计算状态7。状态6可以通过字符a转换到状态7，而状态prev[6]=1可以通过字符a转换到状态2，故prev[7]=2。也就是说，状态集{6,1,0}通过字符a转移到了状态集{7,2,1,0}。更一般的做法如下：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">makePrev</span><span class="params">(<span class="built_in">string</span> pattern, <span class="built_in">vector</span>&lt;<span class="keyword">int</span>&gt; &amp;prev)</span></span>&#123;</span><br><span class="line">  prev.resize(pattern.length()+<span class="number">1</span>, <span class="number">0</span>);</span><br><span class="line">  prev[<span class="number">0</span>] = <span class="number">-1</span>;</span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; pattern.size(); ++i)&#123;</span><br><span class="line">    <span class="keyword">int</span> pi = prev[i];</span><br><span class="line">    <span class="keyword">while</span> (pi &gt; <span class="number">0</span> &amp;&amp; pattern[i] != pattern[pi])&#123;</span><br><span class="line">      pi = prev[pi];</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">if</span> (pi == <span class="number">-1</span> || pattern[i] == pattern[pi])&#123; <span class="comment">// prev[0]设为-1主要是为了方便这里能合并if判断</span></span><br><span class="line">      prev[i+<span class="number">1</span>] = pi+<span class="number">1</span>;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">      prev[i+<span class="number">1</span>] = pi;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>最后，假设我们已经得到了DFA，那么应该如何运行呢？之前提到，我们可以用最后一个状态s<sub>k</sub>来唯一指代一个状态集合来作为DFA的状态，而DFA中的状态能转移到哪得把状态集里所有状态都扫一遍。因此假设当前字符为c，有</p>
+<ul>
+<li>如果P[s<sub>k</sub>]==c，则转移到状态s<sub>k</sub>+1，否则得查P[prev[s<sub>k</sub>]]</li>
+<li>下一个状态集至少有状态0</li>
+</ul>
+<p>因此可以这么判断：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">strStr</span><span class="params">(<span class="built_in">string</span> haystack, <span class="built_in">string</span> needle)</span> </span>&#123;</span><br><span class="line">  <span class="keyword">if</span> (needle.size() &gt; haystack.size())&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="keyword">if</span> (needle.empty())&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="built_in">vector</span>&lt;<span class="keyword">int</span>&gt; prev;</span><br><span class="line">  makePrev(needle, prev);</span><br><span class="line">  <span class="keyword">int</span> successIndex = needle.size();</span><br><span class="line">  <span class="keyword">int</span> pi = <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; haystack.size(); ++i)&#123;</span><br><span class="line">    <span class="keyword">char</span> c = haystack[i];</span><br><span class="line">    <span class="keyword">while</span> (pi &gt;= <span class="number">0</span> &amp;&amp; c != needle[pi])&#123;</span><br><span class="line">      pi = prev[pi];</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">if</span> (++pi &gt;= successIndex)&#123; <span class="comment">// prev[0]设为-1后这里也能合并判断</span></span><br><span class="line">      <span class="keyword">return</span> i-needle.size()+<span class="number">1</span>;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="keyword">return</span> <span class="number">-1</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>其实代码写出来就非常像KMP了，只是对于状态转移，KMP的解释是后缀匹配，但我个人很难理解后缀匹配，用笔算着算着就晕了。用状态转移解释的话，虽然说着麻烦，但自己笔算推演一下就很容易理解。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/KMP/" rel="tag"># KMP</a>
+            
+              <a href="/tags/NFA/" rel="tag"># NFA</a>
+            
+              <a href="/tags/leetcode/" rel="tag"># leetcode</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/12/13/opencv/" rel="next" title="opencv简单使用">
+                  <i class="fa fa-chevron-left"></i> opencv简单使用
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#NFA模拟字符串匹配"><span class="nav-number">1.</span> <span class="nav-text">NFA模拟字符串匹配</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#NFA到DFA"><span class="nav-number">2.</span> <span class="nav-text">NFA到DFA</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#总结"><span class="nav-number">3.</span> <span class="nav-text">总结</span></a></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">31</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">35</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2019</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>

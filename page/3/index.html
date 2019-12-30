@@ -191,6 +191,317 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/02/jvm4/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/09/02/jvm4/" class="post-title-link" itemprop="url">JVM学习（4）类文件结构</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-02 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-02T00:00:00+08:00">2019-09-02</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-09-05 18:24:17" itemprop="dateModified" datetime="2019-09-05T18:24:17+08:00">2019-09-05</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>为了实现“Write Once, Run Anywhere”，JVM支持运行.class格式的字节码文件，这样可以保证JVM的平台无关性和语言无关性：即不管什么语言，只要能编译为符合规范的.class文件，就可以在JVM上运行。</p>
+<h2 id="class类文件结构"><a href="#class类文件结构" class="headerlink" title="class类文件结构"></a>class类文件结构</h2><p>任何一个class文件都对应着唯一一个类或接口的定义信息。当然一来JVM可以动态生成class，不一定每个类都对应着一个.class文件；二来一个java源代码里可以定义多个类，每个类（包括子类）实际上都会生成一个.class文件。</p>
+<p>一个典型的class文件分为：MagicNumber，Version，Constant_pool，Access_flag，This_class，Super_class，Interfaces，Fields，Methods 和Attributes这十个部分：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th align="center">名称</th>
+<th align="center">数量</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>u4</td>
+<td align="center">magic</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">minor_version</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">major</td>
+<td align="center">_version</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">constant_pool_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>cp_info</td>
+<td align="center">constant_pool</td>
+<td align="center">constant_pool_count-1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">access_flags</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">this_class</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">super_class</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">interfaces_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">interfaces</td>
+<td align="center">interfaces_count</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">fields_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>field_info</td>
+<td align="center">fields</td>
+<td align="center">fields_count</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">methods_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>method_info</td>
+<td align="center">methods</td>
+<td align="center">methods_count</td>
+</tr>
+<tr>
+<td>u2</td>
+<td align="center">attributes_count</td>
+<td align="center">1</td>
+</tr>
+<tr>
+<td>attribute_info</td>
+<td align="center">attributes</td>
+<td align="center">attributes_count</td>
+</tr>
+</tbody></table>
+<p>其中u1, u2, u4,u8分别表示1、2、4、8字节长度的标量，且以big-endian的方式保存。</p>
+<p>不定长的区域，比如constant_pool，method_info等，基本都是count+info[count]这种形式。</p>
+<p>先写一个示例代码：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> java.io.Serializable;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Serializable</span> </span>&#123;</span><br><span class="line">  <span class="keyword">protected</span> <span class="keyword">int</span> hello1;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello1</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello1;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">Child</span> <span class="keyword">extends</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Comparable</span>&lt;<span class="title">Child</span>&gt;</span>&#123;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="keyword">long</span> serialVersionUID = -<span class="number">3911120229867216339L</span>;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">transient</span> <span class="keyword">int</span> hello2;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">setHello2</span><span class="params">(<span class="keyword">int</span> hello2)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">this</span>.hello2 = hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello2</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">compareTo</span><span class="params">(Child o)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">this</span>.hello2 - o.hello2;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>注意这段代码编译后生成两个class文件，这里只分析<a href="/files/Child.class">Child.class</a>。可以先用<code>javap -v -p -s -sysinfo -constants Child</code>看一下基本框架。然后依次分析每个区域。</p>
+<h2 id="Magic-Numbers和版本号"><a href="#Magic-Numbers和版本号" class="headerlink" title="Magic Numbers和版本号"></a>Magic Numbers和版本号</h2><p>魔数，.class文件必须以0xcafebabe开头，这个跟.jpeg之类的文件类似。</p>
+<p>接下来4个字节是版本号，其中后两个字节是主版本号，这里是0x0031，对应JDK1.5.0_11版本。一般高版本的JVM兼容低版本的.class文件，但反过来不行。</p>
+<h2 id="常量池"><a href="#常量池" class="headerlink" title="常量池"></a>常量池</h2><p>接下来是常量池（constant pool）部分，2字节的数字表示一共有多少个常量，接下来一共有constant_pool_count-1个实际常量。这里一共有0x002a-1=42-1=41个常量。且常量池索引以1开始，0被用来表示“不引用任何一个常量池项目”。</p>
+<p>常量池主要包含两部分：字面量（literal）和符号引用（symbolic references）。字面量比如文本字符串、声明为final的常量值等。符号引用包含三部分：</p>
+<ul>
+<li>类和接口的全限定名（full qualified name）</li>
+<li>字段的名称和描述符（descriptor）</li>
+<li>方法的名称和描述符</li>
+</ul>
+<p>每个常量以1字节的类型描述开始，然后按这个类型定义的表去填充数据，具体参考<a href="https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html" target="_blank" rel="noopener">The class File Format</a>。以刚才编译好的.class文件为例，跳过重复的类型，大概有以下几个部分：</p>
+<ul>
+<li>第1个常量是<code>0a 0006 0023</code>，对应CONSTANT_Methodref_info，两个index分别指向第6和第35个常量，表明这个方法在第6个常量表示的类（Base），具体的名称和描述符参考第35个常量（<code>&quot;&lt;init&gt;&quot;:()V</code>）</li>
+<li>第2个常量是<code>09 0004 0024</code>，对应CONSTANT_Fieldref_info，与CONSTANT_Methodref_info类似，表明这个字段在第4个常量表示的类（Child），具体的名称和描述符参考第36个常量（<code>hello2:I</code>）</li>
+<li>第4个常量是<code>07 0026</code>，对应CONSTANT_Class_info，这个类的名称指向第38个常量，这个常量是个字符串，值为<code>Child</code></li>
+<li>第8个常量是<code>01 0010 73657269616c56657273696f6e554944</code>，对应CONSTANT_Utf8_info，是一个utf8字符串，此字符串长为16（32字节），用python3的<code>bytes.fromhex(&quot;73657269616c56657273696f6e554944&quot;)</code>解码得到字符串是<code>serialVersionUID</code></li>
+<li>第11个常量是<code>05 c9b8e8df78eba22d</code>，对应CONSTANT_Long_info，是一个long型常量，对应十进制数字为<code>-3911120229867216339</code></li>
+<li>第35个常量是<code>0c 000f 0010</code>，对应CONSTANT_NameAndType_info，表示它的名字为第15个常量（<code>&lt;init&gt;</code>），类型为第16个常量<code>()V</code></li>
+</ul>
+<p>总的来说常量池还是以字符串、数字为主。</p>
+<h2 id="访问标志"><a href="#访问标志" class="headerlink" title="访问标志"></a>访问标志</h2><p>常量池结束后是两个字节的访问标志，用以声明这个类/接口/注解…的访问类型。这个类是0x0021，为<code>ACC_PUBLIC|ACC_SUPER</code>，ACC_PUBLIC容易理解，即这个类声明为public的；而ACC_SUPER主要是为了向下兼容，因为invokespecial这个指令的语义在JDK1.0.2发生过变化（可以参考<a href="https://blog.csdn.net/xinaij/article/details/38872851" target="_blank" rel="noopener">ACC_SUPER和早期的invokespecial</a>），那么新版JDK编译出来的类都需要带上这个flag。</p>
+<h2 id="类索引、父类索引和接口索引集合"><a href="#类索引、父类索引和接口索引集合" class="headerlink" title="类索引、父类索引和接口索引集合"></a>类索引、父类索引和接口索引集合</h2><p>还是指向常量池的信息，这里类是第4个常量（Child类），父类是第6个常量（Base类）。由于所有java class都至少有个一个基类Object，故父类索引一定不为0。</p>
+<p>这个类的接口集合大小为1，之后是一系列2字节的常量索引（长度为1），可以看到Child类继承了7号常量描述的接口（java/lang/Comparable）。</p>
+<h2 id="字段表集合"><a href="#字段表集合" class="headerlink" title="字段表集合"></a>字段表集合</h2><p>相比于接口，字段包含的信息比较多，除了名字和类型外，还包含诸如是否被static、final、public、volatile等修饰符修饰等信息。因此一个字段被定义为</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">field_info &#123;</span><br><span class="line">  u2 access_flags;</span><br><span class="line">  u2 name_index;</span><br><span class="line">  u2 descriptor_index;</span><br><span class="line">  u2 attributes_count;</span><br><span class="line">  attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这里一共有2个字段，第一个字段为<code>001A 0008 0009 0001 000A 00000002 000B</code>，被声明为<code>0x1A=ACC_PRIVATE|ACC_STATIC|ACC_FINAL</code>，名称为第8个常量（字符串<code>serialVersionUID</code>），描述符为第9个常量（字符串<code>J</code>，表示基本类型long）。</p>
+<p>所谓描述符(descriptor)是描述字段的数据类型、方法的参数列表（包括数量、类型、顺序）和返回值。基本类型和void都用一个大写字母表示，而对象用L+对象的全限定名来表示，比如<code>Ljava/lang/Object;</code>（一般全限定名后加个分号以示区分）。数组则是加个<code>[</code>，比如<code>[[Ljava/lang/String;</code>表示<code>String[][]</code>这样的二位数组，<code>[I</code>表示<code>int[]</code>这样的int数组。描述方法时，先写参数列表，后写返回值。例如方法<code>int indexOf(char[] source, int sourceOffset, char[] target, int targetOffset, int targetCount, int from Index)</code>的描述符为<code>([CII[CIII]])I</code>。</p>
+<p>最后，这个字段包含1个属性（attribute），属性用来保存一些额外信息，每个attribute_info被定义为</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">attribute_info &#123;</span><br><span class="line">     u2 attribute_name_index;</span><br><span class="line">     u4 attribute_length;</span><br><span class="line">     u1 info[attribute_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以看到这个字段有一个attribute_info，name为第10个常量<code>ConstantValue</code>，其内容长为2字节，但需要联合起来表示指向第11个常量(一个long型的数字-3911120229867216339l)。</p>
+<p>第二个字段为<code>0082 000D 000E 0000</code>，被声明为<code>0x82=ACC_PRIVATE|ACC_TRANSIENT</code>，名称为第13个常量<code>hello2</code>，描述符为第14个常量<code>I</code>，没有额外属性。</p>
+<h2 id="方法表集合"><a href="#方法表集合" class="headerlink" title="方法表集合"></a>方法表集合</h2><p>方法表和字段表结构很类似，不过由于字段和方法的访问标志不太一样，所以实际含义不太一样。此外方法表一般会有一个属性指向Code类型，需要参考属性集合表。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">method_info &#123;</span><br><span class="line">     u2 access_flags;</span><br><span class="line">     u2 name_index;</span><br><span class="line">     u2 descriptor_index;</span><br><span class="line">     u2 attributes_count;</span><br><span class="line">     attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>Child里有6个方法，如下表所示，其中bridge表示这个方法是桥接方法，synthetic表示这个方法由编译器生成。</p>
+<table>
+<thead>
+<tr>
+<th>二进制码</th>
+<th>方法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0001 000f 0010 0001 0011 0000002f...</code></td>
+<td><code>public &lt;init&gt; ()V</code></td>
+</tr>
+<tr>
+<td><code>0001 0016 0017 0001 0011 0000003e...</code></td>
+<td><code>public setHello2 (I)V</code></td>
+</tr>
+<tr>
+<td><code>0001 0018 0019 0001 0011 0000002f...</code></td>
+<td><code>public getHello2 ()I</code></td>
+</tr>
+<tr>
+<td><code>0001 001a 001b 0001 0011 0000003e...</code></td>
+<td><code>public compareTo (LChild;)I</code></td>
+</tr>
+<tr>
+<td><code>1041 001d 0019 0001 0011 0000002f...</code></td>
+<td><code>public bridge synthetic getHello1 ()I</code></td>
+</tr>
+<tr>
+<td><code>1041 001a 001e 0001 0011 00000033...</code></td>
+<td><code>public bridge synthetic compareTo (Ljava/lang/Object;)I</code></td>
+</tr>
+</tbody></table>
+<p>JSL对<a href="https://docs.oracle.com/javase/tutorial/java/generics/bridgeMethods.html" target="_blank" rel="noopener">bridge method</a>的定义为：</p>
+<blockquote>
+<p>When compiling a class or interface that extends a parameterized class or implements a parameterized interface, the compiler may need to create a synthetic method, called a bridge method, as part of the type erasure process. You normally don’t need to worry about bridge methods, but you might be puzzled if one appears in a stack trace.</p>
+</blockquote>
+<p>比较奇怪的是<code>getHello1</code>也生成了一个桥接方法，我在网上查到的说法是只有类型擦除的时候才会生成bridge method，但实际上我试下来只要Child继承了Base，无论是否继承了Comparable，都会生成一个bridge的<code>getHello1()</code>。看了下反编译后的字节码，似乎bridge方法都会invokespecial/invokevirtual另一个方法，也就是说会把具体实现代理到其他方法去。</p>
+<h2 id="属性表集合"><a href="#属性表集合" class="headerlink" title="属性表集合"></a>属性表集合</h2><p>可以看出，每个方法都有一个Code类型的属性，实际上的字节码也保存在这个属性里。之前也提到过一个ConstantValue属性。JVM对属性的规定比较宽泛，也允许编译器向属性表写入自己定义的属性信息。这里只记录一些常见的属性。</p>
+<h3 id="Code属性"><a href="#Code属性" class="headerlink" title="Code属性"></a>Code属性</h3><p>完整的Code_attribute定义如下，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">Code_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 max_stack;</span><br><span class="line">    u2 max_locals;</span><br><span class="line">    u4 code_length;</span><br><span class="line">    u1 code[code_length];</span><br><span class="line">    u2 exception_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 end_pc;</span><br><span class="line">        u2 handler_pc;</span><br><span class="line">        u2 catch_type;</span><br><span class="line">    &#125; exception_table[exception_table_length];</span><br><span class="line">    u2 attributes_count;</span><br><span class="line">    attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>以上一节中的<code>compareTo (LChild;)I</code>方法为例，其完整二进制代码如下：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">0011 0000003e 0002 0002 0000000a </span><br><span class="line">2a b4 00 02 2b b4 00 02 64 ac </span><br><span class="line">0000 </span><br><span class="line">0002</span><br><span class="line">0012 00000006 0001 0000 0019 </span><br><span class="line">0013 00000016 0002 0000 000a 0014 0015 0000 0000 000a 001c 0015 0001</span><br></pre></td></tr></table></figure>
+
+<p>可以看出，这个方法允许的最大操作数栈的最大深度为2，允许最多2个局部变量（包括形参）：max_locals参数的单位是slot，对于小于双字节的类型（如byte,char…）需要1个slot，而对double和long则需要2个slot。方法参数包括this，所以这个方法实际上参数是2。代码长度为10（<code>2a b4 00 02 2b b4 00 02 64 ac</code>），分别表示：</p>
+<table>
+<thead>
+<tr>
+<th>字节码</th>
+<th>指令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>2a</td>
+<td><code>aload_0</code></td>
+<td>将第一个引用类型本地变量推送至栈顶</td>
+</tr>
+<tr>
+<td>b4 0002</td>
+<td><code>getfield</code></td>
+<td>获取指定类的实例域, 并将其压入栈顶。这里操作数为0x0002，查询常量池可知要把Child.hello2压栈</td>
+</tr>
+<tr>
+<td>2b</td>
+<td><code>aload_1</code></td>
+<td>将第二个引用类型本地变量推送至栈顶</td>
+</tr>
+<tr>
+<td>b4 0002</td>
+<td><code>getfield</code></td>
+<td>获取指定类的实例域, 并将其压入栈顶</td>
+</tr>
+<tr>
+<td>64</td>
+<td><code>isub</code></td>
+<td>将栈顶两int型数值相减并将结果压入栈顶</td>
+</tr>
+<tr>
+<td>ac</td>
+<td><code>ireturn</code></td>
+<td>从当前方法返回int</td>
+</tr>
+</tbody></table>
+<p>之后exception_table为空，有两个额外属性，分别是<code>LineNumberTable</code>和<code>LocalVariableTable</code>。</p>
+<h3 id="LineNumberTable属性"><a href="#LineNumberTable属性" class="headerlink" title="LineNumberTable属性"></a>LineNumberTable属性</h3><p>用于描述java源代码行号和字节码行号之间的对应关系，定义如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">LineNumberTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 line_number_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 line_number;	</span><br><span class="line">    &#125; line_number_table[line_number_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>所以这段代码偏移量为0的代码对应源代码的第25行，且只有一行代码。</p>
+<h3 id="LocalVariableTable属性"><a href="#LocalVariableTable属性" class="headerlink" title="LocalVariableTable属性"></a>LocalVariableTable属性</h3><p>非必须属性，用来记录每个变量的名字，方便别人调用。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">LocalVariableTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 local_variable_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 length;</span><br><span class="line">        u2 name_index;</span><br><span class="line">        u2 descriptor_index;</span><br><span class="line">        u2 index;</span><br><span class="line">    &#125; local_variable_table[local_variable_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这段代码一共记录了两个变量名，分别是<code>this</code>和<code>o</code>，对应两个形参名。</p>
+<p>此外Child类中还有SourceFile、Signature属性，这里就不多说了。</p>
+<p>Child类基本就分析到这了，实际上少分析了几个比较重要的分析，比如执行过程中的异常处理流程、异常抛出列表等、引导方法（BootstrapMethods）、各种字节码指令（特别是异常指令和同步指令）等，之后再补充。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/30/jvm3/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -854,118 +1165,6 @@
   
   
   <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jvm1/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/jvm1/" class="post-title-link" itemprop="url">JVM学习（1）事前准备</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:35:20" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>最近在线上调试时发现对JVM了解还是不足，找了本书（《深入理解Java虚拟机》）补习一下，并做些笔记。不过这本书只到java 1.7，缺少1.8之后的一些特性，需要之后再学习一个。</p>
-<h2 id="代码获取"><a href="#代码获取" class="headerlink" title="代码获取"></a>代码获取</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">hg clone http:<span class="comment">//hg.openjdk.java.net/jdk7u/jdk7u-dev</span></span><br><span class="line">cd jdk7u-dev</span><br><span class="line">chmode <span class="number">755</span> get_source.sh</span><br><span class="line">./get_source.sh</span><br></pre></td></tr></table></figure>
-
-<h2 id="编译运行"><a href="#编译运行" class="headerlink" title="编译运行"></a>编译运行</h2><p>首先需要自己配一大堆环境变量，特别是把JAVA_HOME、CLASSPATH、LD_LIBRARY_PATH这几个unset掉</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line">export LANG=C</span><br><span class="line">export ALT_BOOTDIR=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALT_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export BUILD_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALLOW_DOWNLOADS=<span class="keyword">true</span></span><br><span class="line">export HOTSPOT_BUILD_JOBS=<span class="number">6</span></span><br><span class="line">export ALT_PARALLEL_COMPILE_JOBS=<span class="number">6</span></span><br><span class="line">export SKIP_COMPARE_IMAGES=<span class="keyword">true</span></span><br><span class="line">export USE_PRECOMPILED_HEADER=<span class="keyword">true</span></span><br><span class="line">export BUILD_LANGTOOLS=<span class="keyword">true</span></span><br><span class="line">export BUILD_HOTSPOT=<span class="keyword">true</span></span><br><span class="line">export BUILD_JDK=<span class="keyword">true</span></span><br><span class="line">export SKIP_DEBUG_BUILD=<span class="keyword">false</span></span><br><span class="line">export SKIP_FASTDEBUG_BUILD=<span class="keyword">true</span></span><br><span class="line">export DEBUG_NAME=debug</span><br><span class="line">export BUILD_DEPLOY=<span class="keyword">false</span></span><br><span class="line">export BUILD_INSTALL=<span class="keyword">false</span></span><br><span class="line">export ALT_OUTPUTDIR=/home/maxiaoxin/workspace/github/jdk7u-dev/output/</span><br><span class="line">export ALT_FREETYPE_LIB_PATH=/opt/soft/freetype2/lib</span><br><span class="line">export ALT_FREETYPE_HEADERS_PATH=/opt/soft/freetype2/include/freetype2</span><br><span class="line">export ALT_CUPS_HEADERS_PATH=/opt/soft/cups/include/</span><br><span class="line">export DISABLE_HOTSPOT_OS_VERSION_CHECK=ok </span><br><span class="line">export DEBUG_BINARIES=<span class="keyword">true</span></span><br><span class="line">unset JAVA_HOME</span><br><span class="line">unset CLASSPATH</span><br><span class="line">unset LD_LIBRARY_PATH</span><br></pre></td></tr></table></figure>
-
-<p>然后运行<code>make sanity &amp;&amp; make DISABLE_HOTSPOT_OS_VERSION_CHECK=ok</code><br>编译成功后<code>output-debug/j2sdk-image</code>即为jdk的目录，执行<code>export JAVA_HOME=$path &amp;&amp; ./bin/java -version</code>可以验证下JVM的版本<br>可以只编译hotspot，需要执行<code>cd hotspot/make &amp;&amp; make DEBUG_BINARIES=true</code><br>在<code>/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmgd64_compiler2/product</code>目录下，找到env.sh文件，修改</p>
-<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">export</span> JAVA_HOME=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/j2sdk-image</span><br><span class="line"><span class="built_in">export</span> CLASSPATH=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmg:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/rt.jar:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/i18n.jar</span><br><span class="line"><span class="built_in">export</span> HOTSPOT_BUILD_USER=<span class="string">"maxiaoxin in hotspot"</span></span><br><span class="line"><span class="built_in">export</span> LD_LIBRARY_PATH=:&#123;JAVA_HOME&#125;/jre/lib/amd64</span><br></pre></td></tr></table></figure>
-
-<p>然后运行<code>source env.sh &amp;&amp; ./gamma -version</code>可以验证一下虚拟机版本，执行<code>./gamma Queens</code>可以测试一下用编译好的虚拟机解决八皇后问题，其中Queens.class如果不存在可以自己找到源代码并编译一下</p>
-<h2 id="部分错误"><a href="#部分错误" class="headerlink" title="部分错误"></a>部分错误</h2><p>有各种依赖需要自己手动装一下，忘了记录下来了，比如cups和freetype2需要自己安装一下，并设置环境变量（不一定要设置在系统变量里）</p>
-<h3 id="undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’"><a href="#undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’" class="headerlink" title="undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work(oopDesc*, int)’"></a>undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work<oopdesc>(oopDesc*, int)’</oopdesc></h3><p>参考<a href="https://www.cnblogs.com/abaoge/p/7932612.html" target="_blank" rel="noopener">编译虚拟机jvm——openjdk的编译</a><br>解决：将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.cpp</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;<span class="class"><span class="keyword">class</span> <span class="title">T</span>&gt; </span></span><br><span class="line"><span class="class"><span class="title">void</span> <span class="title">G1SATBCardTableModRefBS</span>:</span>:write_ref_array_pre_work(T* dst, <span class="keyword">int</span> count) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!JavaThread::satb_mark_queue_set().is_active()) <span class="keyword">return</span>; </span><br><span class="line">  T* elem_ptr = dst; </span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; count; i++, elem_ptr++) &#123; </span><br><span class="line">    T heap_oop = oopDesc::load_heap_oop(elem_ptr); </span><br><span class="line">    <span class="keyword">if</span> (!oopDesc::is_null(heap_oop)) &#123; </span><br><span class="line">      enqueue(oopDesc::decode_heap_oop_not_null(heap_oop)); </span><br><span class="line">    &#125; </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>内容下加上如下</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//2017-10-19 Vicent_Chen added </span></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123;</span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; <span class="comment">//2017-10-19 Vicent_Chen added</span></span><br></pre></td></tr></table></figure>
-
-<p>将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.hpp如下部分</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>注释掉，然后再加入</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span></span>; </span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_unintialized)</span></span>;</span><br></pre></td></tr></table></figure>
-
-<h3 id="“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed"><a href="#“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed" class="headerlink" title="“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed"></a>“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed</h3><p>参考<a href="https://segmentfault.com/q/1010000010420043" target="_blank" rel="noopener">ubuntu openjdk jmx编译异常,无法继续</a>，需要手动编译两个类</p>
-<p>不过我试下来这个错误是随机出现的。。。实在崩溃。</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cd $&#123;OUTPUT_DIR&#125;/classes/javax/management/remote/rmi/</span><br><span class="line">javac RMIServerImpl_Stub.java</span><br><span class="line">javac RMIConnectionImpl_Stub.java</span><br></pre></td></tr></table></figure>
-
-<h3 id="其他错误"><a href="#其他错误" class="headerlink" title="其他错误"></a>其他错误</h3><p>参考<a href="https://blog.csdn.net/beswkwangbo/article/details/38757677" target="_blank" rel="noopener">Ubuntu 14.04 64 bit 编译 openjdk 7</a></p>
-<ul>
-<li>第一个是 fatal error: sys/cdefs.h: No such file or directory。与gcc版本有关，解决办法：sudo apt-get install libc6-dev-i386</li>
-<li>第二个是 bits/c++config.h: No such file or directory。与g++版本有关，解决办法：sudo apt-get install g++-4.8-multilib</li>
-<li>第三个是cc1plus: error: the “stabs” debug format cannot be used with pre-compiled headers [-Werror=deprecated]，因为高版本的gcc不再支持stabs，解决办法：在make命令中加上 DEBUG_BINARIES=true</li>
-<li>第四个是，cc1plus all warnings being treated as errors ubuntu。解决办法：在hotspot/make/makefiles/gcc.make 中，把 -Werror 选项去掉。</li>
-</ul>
-<p>很麻烦，因为CLion只支持CMake，所以编译还得自己编译。不过调试还是没问题，自己写一个简单的CMakelists.txt，就可以调试了。</p>
-<h2 id="导入CLion"><a href="#导入CLion" class="headerlink" title="导入CLion"></a>导入CLion</h2><figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">cmake_minimum_required(VERSION 3.4.1)</span><br><span class="line">project(jdk7u CXX)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_CXX_STANDARD 11)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_VERBOSE_MAKEFILE 1)</span><br><span class="line"></span><br><span class="line">add_custom_target(gamma</span><br><span class="line">        WORKING_DIRECTORY <span class="variable">$&#123;CMAKE_CURRENT_SOURCE_DIR&#125;</span>)</span><br></pre></td></tr></table></figure>
-
-<p>启动clion之前需要把刚才那一堆环境变量搞进去，在执行前还需要把JVM环境变量设置好。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1174,6 +1373,118 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jvm1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/jvm1/" class="post-title-link" itemprop="url">JVM学习（1）事前准备</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:35:20" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>最近在线上调试时发现对JVM了解还是不足，找了本书（《深入理解Java虚拟机》）补习一下，并做些笔记。不过这本书只到java 1.7，缺少1.8之后的一些特性，需要之后再学习一个。</p>
+<h2 id="代码获取"><a href="#代码获取" class="headerlink" title="代码获取"></a>代码获取</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">hg clone http:<span class="comment">//hg.openjdk.java.net/jdk7u/jdk7u-dev</span></span><br><span class="line">cd jdk7u-dev</span><br><span class="line">chmode <span class="number">755</span> get_source.sh</span><br><span class="line">./get_source.sh</span><br></pre></td></tr></table></figure>
+
+<h2 id="编译运行"><a href="#编译运行" class="headerlink" title="编译运行"></a>编译运行</h2><p>首先需要自己配一大堆环境变量，特别是把JAVA_HOME、CLASSPATH、LD_LIBRARY_PATH这几个unset掉</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line">export LANG=C</span><br><span class="line">export ALT_BOOTDIR=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALT_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export BUILD_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALLOW_DOWNLOADS=<span class="keyword">true</span></span><br><span class="line">export HOTSPOT_BUILD_JOBS=<span class="number">6</span></span><br><span class="line">export ALT_PARALLEL_COMPILE_JOBS=<span class="number">6</span></span><br><span class="line">export SKIP_COMPARE_IMAGES=<span class="keyword">true</span></span><br><span class="line">export USE_PRECOMPILED_HEADER=<span class="keyword">true</span></span><br><span class="line">export BUILD_LANGTOOLS=<span class="keyword">true</span></span><br><span class="line">export BUILD_HOTSPOT=<span class="keyword">true</span></span><br><span class="line">export BUILD_JDK=<span class="keyword">true</span></span><br><span class="line">export SKIP_DEBUG_BUILD=<span class="keyword">false</span></span><br><span class="line">export SKIP_FASTDEBUG_BUILD=<span class="keyword">true</span></span><br><span class="line">export DEBUG_NAME=debug</span><br><span class="line">export BUILD_DEPLOY=<span class="keyword">false</span></span><br><span class="line">export BUILD_INSTALL=<span class="keyword">false</span></span><br><span class="line">export ALT_OUTPUTDIR=/home/maxiaoxin/workspace/github/jdk7u-dev/output/</span><br><span class="line">export ALT_FREETYPE_LIB_PATH=/opt/soft/freetype2/lib</span><br><span class="line">export ALT_FREETYPE_HEADERS_PATH=/opt/soft/freetype2/include/freetype2</span><br><span class="line">export ALT_CUPS_HEADERS_PATH=/opt/soft/cups/include/</span><br><span class="line">export DISABLE_HOTSPOT_OS_VERSION_CHECK=ok </span><br><span class="line">export DEBUG_BINARIES=<span class="keyword">true</span></span><br><span class="line">unset JAVA_HOME</span><br><span class="line">unset CLASSPATH</span><br><span class="line">unset LD_LIBRARY_PATH</span><br></pre></td></tr></table></figure>
+
+<p>然后运行<code>make sanity &amp;&amp; make DISABLE_HOTSPOT_OS_VERSION_CHECK=ok</code><br>编译成功后<code>output-debug/j2sdk-image</code>即为jdk的目录，执行<code>export JAVA_HOME=$path &amp;&amp; ./bin/java -version</code>可以验证下JVM的版本<br>可以只编译hotspot，需要执行<code>cd hotspot/make &amp;&amp; make DEBUG_BINARIES=true</code><br>在<code>/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmgd64_compiler2/product</code>目录下，找到env.sh文件，修改</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">export</span> JAVA_HOME=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/j2sdk-image</span><br><span class="line"><span class="built_in">export</span> CLASSPATH=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmg:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/rt.jar:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/i18n.jar</span><br><span class="line"><span class="built_in">export</span> HOTSPOT_BUILD_USER=<span class="string">"maxiaoxin in hotspot"</span></span><br><span class="line"><span class="built_in">export</span> LD_LIBRARY_PATH=:&#123;JAVA_HOME&#125;/jre/lib/amd64</span><br></pre></td></tr></table></figure>
+
+<p>然后运行<code>source env.sh &amp;&amp; ./gamma -version</code>可以验证一下虚拟机版本，执行<code>./gamma Queens</code>可以测试一下用编译好的虚拟机解决八皇后问题，其中Queens.class如果不存在可以自己找到源代码并编译一下</p>
+<h2 id="部分错误"><a href="#部分错误" class="headerlink" title="部分错误"></a>部分错误</h2><p>有各种依赖需要自己手动装一下，忘了记录下来了，比如cups和freetype2需要自己安装一下，并设置环境变量（不一定要设置在系统变量里）</p>
+<h3 id="undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’"><a href="#undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’" class="headerlink" title="undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work(oopDesc*, int)’"></a>undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work<oopdesc>(oopDesc*, int)’</oopdesc></h3><p>参考<a href="https://www.cnblogs.com/abaoge/p/7932612.html" target="_blank" rel="noopener">编译虚拟机jvm——openjdk的编译</a><br>解决：将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.cpp</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;<span class="class"><span class="keyword">class</span> <span class="title">T</span>&gt; </span></span><br><span class="line"><span class="class"><span class="title">void</span> <span class="title">G1SATBCardTableModRefBS</span>:</span>:write_ref_array_pre_work(T* dst, <span class="keyword">int</span> count) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!JavaThread::satb_mark_queue_set().is_active()) <span class="keyword">return</span>; </span><br><span class="line">  T* elem_ptr = dst; </span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; count; i++, elem_ptr++) &#123; </span><br><span class="line">    T heap_oop = oopDesc::load_heap_oop(elem_ptr); </span><br><span class="line">    <span class="keyword">if</span> (!oopDesc::is_null(heap_oop)) &#123; </span><br><span class="line">      enqueue(oopDesc::decode_heap_oop_not_null(heap_oop)); </span><br><span class="line">    &#125; </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>内容下加上如下</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//2017-10-19 Vicent_Chen added </span></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123;</span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; <span class="comment">//2017-10-19 Vicent_Chen added</span></span><br></pre></td></tr></table></figure>
+
+<p>将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.hpp如下部分</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>注释掉，然后再加入</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span></span>; </span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_unintialized)</span></span>;</span><br></pre></td></tr></table></figure>
+
+<h3 id="“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed"><a href="#“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed" class="headerlink" title="“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed"></a>“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed</h3><p>参考<a href="https://segmentfault.com/q/1010000010420043" target="_blank" rel="noopener">ubuntu openjdk jmx编译异常,无法继续</a>，需要手动编译两个类</p>
+<p>不过我试下来这个错误是随机出现的。。。实在崩溃。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cd $&#123;OUTPUT_DIR&#125;/classes/javax/management/remote/rmi/</span><br><span class="line">javac RMIServerImpl_Stub.java</span><br><span class="line">javac RMIConnectionImpl_Stub.java</span><br></pre></td></tr></table></figure>
+
+<h3 id="其他错误"><a href="#其他错误" class="headerlink" title="其他错误"></a>其他错误</h3><p>参考<a href="https://blog.csdn.net/beswkwangbo/article/details/38757677" target="_blank" rel="noopener">Ubuntu 14.04 64 bit 编译 openjdk 7</a></p>
+<ul>
+<li>第一个是 fatal error: sys/cdefs.h: No such file or directory。与gcc版本有关，解决办法：sudo apt-get install libc6-dev-i386</li>
+<li>第二个是 bits/c++config.h: No such file or directory。与g++版本有关，解决办法：sudo apt-get install g++-4.8-multilib</li>
+<li>第三个是cc1plus: error: the “stabs” debug format cannot be used with pre-compiled headers [-Werror=deprecated]，因为高版本的gcc不再支持stabs，解决办法：在make命令中加上 DEBUG_BINARIES=true</li>
+<li>第四个是，cc1plus all warnings being treated as errors ubuntu。解决办法：在hotspot/make/makefiles/gcc.make 中，把 -Werror 选项去掉。</li>
+</ul>
+<p>很麻烦，因为CLion只支持CMake，所以编译还得自己编译。不过调试还是没问题，自己写一个简单的CMakelists.txt，就可以调试了。</p>
+<h2 id="导入CLion"><a href="#导入CLion" class="headerlink" title="导入CLion"></a>导入CLion</h2><figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">cmake_minimum_required(VERSION 3.4.1)</span><br><span class="line">project(jdk7u CXX)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_CXX_STANDARD 11)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_VERBOSE_MAKEFILE 1)</span><br><span class="line"></span><br><span class="line">add_custom_target(gamma</span><br><span class="line">        WORKING_DIRECTORY <span class="variable">$&#123;CMAKE_CURRENT_SOURCE_DIR&#125;</span>)</span><br></pre></td></tr></table></figure>
+
+<p>启动clion之前需要把刚才那一堆环境变量搞进去，在执行前还需要把JVM环境变量设置好。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/linux-cmd-nc/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1242,88 +1553,11 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/nginx-qps/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/nginx-qps/" class="post-title-link" itemprop="url">Shell命令查看Nginx QPS</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:38:46" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>转自<a href="https://blog.csdn.net/dong_007_007/article/details/78330337" target="_blank" rel="noopener">一行 Shell 通过 Nginx access 日志实时统计单台机器QPS</a></p>
-<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">tail -f access.log | awk -F <span class="string">'['</span> <span class="string">'&#123;print $2&#125;'</span> | awk <span class="string">'BEGIN&#123;key="";count=0&#125;&#123;if(key==$1)&#123;count++&#125;else&#123;printf("%s\t%d\r\n", key, count);count=1;key=$1&#125;&#125;'</span></span><br><span class="line">tail -f access.log | awk -F <span class="string">'['</span> <span class="string">'&#123;print $2&#125;'</span> | awk <span class="string">'&#123;print $1&#125;'</span> | uniq -c</span><br><span class="line">cat access.log | awk -F <span class="string">'['</span> <span class="string">'&#123;print $2&#125;'</span> | awk <span class="string">'&#123;print $1&#125;'</span> | sort | uniq -c |sort -k1,1nr</span><br></pre></td></tr></table></figure>
-
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
   <nav class="pagination">
-    <a class="extend prev" rel="prev" href="/page/2/"><i class="fa fa-angle-left" aria-label="Previous page"></i></a><a class="page-number" href="/">1</a><a class="page-number" href="/page/2/">2</a><span class="page-number current">3</span>
+    <a class="extend prev" rel="prev" href="/page/2/"><i class="fa fa-angle-left" aria-label="Previous page"></i></a><a class="page-number" href="/">1</a><a class="page-number" href="/page/2/">2</a><span class="page-number current">3</span><a class="page-number" href="/page/4/">4</a><a class="extend next" rel="next" href="/page/4/"><i class="fa fa-angle-right" aria-label="Next page"></i></a>
   </nav>
 
 
@@ -1368,7 +1602,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-count">31</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1443,7 +1677,13 @@
         
           
         
-        <span class="site-state-item-count">32</span>
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">35</span>
         <span class="site-state-item-name">tags</span>
         
       </div>

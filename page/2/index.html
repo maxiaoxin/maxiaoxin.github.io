@@ -191,6 +191,234 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/10/08/redis-read2/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/10/08/redis-read2/" class="post-title-link" itemprop="url">redis学习（2） 压缩列表、快速列表、整数集合、跳表</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-10-08 00:00:00" itemprop="dateCreated datePublished" datetime="2019-10-08T00:00:00+08:00">2019-10-08</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2019-10-30 19:19:31" itemprop="dateModified" datetime="2019-10-30T19:19:31+08:00">2019-10-30</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <h2 id="压缩列表（ziplist）"><a href="#压缩列表（ziplist）" class="headerlink" title="压缩列表（ziplist）"></a>压缩列表（ziplist）</h2><p>当前版本的redis已经不使用ziplist作为列表的底层实现了，取而代之的是quicklist，但quicklist底层还是依赖ziplist。此外，hash表的底层实现也可以是ziplist，在键值较短且数量比较少的情况下会使用ziplist而非hashtable来实现hash表。</p>
+<p>显然，使用ziplist的初衷是节约内存，主要是两方面：尽量使用较小的数据类型保存较小的整数，以及取消指针。既然取消了指针，而每个节点大小都可能不同，因此ziplist采用了变长数组作为实现。数组带来的一个好处是缓存友好，而朴素的链表容易产生大量不可控的零散碎片。Ziplist的大致结构类似<code>&lt;zlbytes&gt; &lt;zltail&gt; &lt;zllen&gt; &lt;entry&gt; &lt;entry&gt; ... &lt;entry&gt; &lt;zlend&gt;</code>，相关定义如下</p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>长度(byte)</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>zlbytes</td>
+<td>uint32_t</td>
+<td>4</td>
+<td>记录整个ziplist占用的字节数</td>
+</tr>
+<tr>
+<td>zltail</td>
+<td>uint32_t</td>
+<td>4</td>
+<td>记录尾节点距离起始地址有多少字节，可以用以直接计算得到尾节点地址</td>
+</tr>
+<tr>
+<td>zllen</td>
+<td>uint16_t</td>
+<td>2</td>
+<td>记录了节点数。如果这个值等于UINT16_MAX时，需要遍历整个ziplist才能获得总节点数</td>
+</tr>
+<tr>
+<td>entryX</td>
+<td>列表节点</td>
+<td>不定</td>
+<td>具体保存数据的节点</td>
+</tr>
+<tr>
+<td>zlent</td>
+<td>uint8_t</td>
+<td>1</td>
+<td>固定为0xff，表示ziplist结尾</td>
+</tr>
+</tbody></table>
+<p>Redis没有对ziplist结构体作出定义，仅将用一个<code>char*</code>指针指代对应的ziplist，相关操作的定义和实现在<code>ziplist.h</code>和<code>ziplist.c</code>，如下：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_HEADER_SIZE     (sizeof(uint32_t)*2+sizeof(uint16_t))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_END_SIZE        (sizeof(uint8_t))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_BYTES(zl)       (*((uint32_t*)(zl)))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_TAIL_OFFSET(zl) (*((uint32_t*)((zl)+sizeof(uint32_t))))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIPLIST_LENGTH(zl)      (*((uint16_t*)((zl)+sizeof(uint32_t)*2)))</span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> ZIP_END 255</span></span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">char</span> *<span class="title">ziplistNew</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> bytes = ZIPLIST_HEADER_SIZE+ZIPLIST_END_SIZE;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *zl = zmalloc(bytes);</span><br><span class="line">    ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);</span><br><span class="line">    ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);</span><br><span class="line">    ZIPLIST_LENGTH(zl) = <span class="number">0</span>;</span><br><span class="line">    zl[bytes<span class="number">-1</span>] = ZIP_END;</span><br><span class="line">    <span class="keyword">return</span> zl;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>基本上初始化就是给头尾相关字段赋值，一个初始化后的空列表为<code>0b000000 0a000000 0000 ff</code>，和上面的说明可以匹配的上。</p>
+<p>所以核心还是<code>entry</code>的定义，ziplist的每个entry可以是一个字节数组或一个整数值，基本上每个entry都是类似<code>&lt;prevlen&gt; &lt;encoding&gt; &lt;entry-data&gt;</code>这样的结构，而对于某些entry，比如小整数，就没有<code>&lt;entry-data&gt;</code>这部分。</p>
+<p><code>&lt;prevlen&gt;</code>表示之前那个entry的长度，但只能是1字节或5字节，取决于之前那个entry的长度：如果小于等于0xfe则采用1字节，否则需要置为0xfe，后4字节作为一个整数表明其长度（要说为啥不进一步细分，可能是因为太长的entry出现频率低吧）。显然，有<code>prevlen</code>后可以很容易的从后向前遍历节点，而从前向后遍历则需要解析<code>&lt;encoding&gt;</code>字段。</p>
+<p><code>&lt;encoding&gt;</code>字段用来标明节点的类型和长度，根据类型及长度，可以分为以下几类：</p>
+<table>
+<thead>
+<tr>
+<th>编码</th>
+<th>编码长度(byte)</th>
+<th>content属性保存的值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>00pppppp</td>
+<td>1</td>
+<td>长度&lt;=0x3f的字节数组</td>
+</tr>
+<tr>
+<td>01pppppp qqqqqqqq</td>
+<td>2</td>
+<td>长度&lt;=0x3fff的字节数组</td>
+</tr>
+<tr>
+<td>10000000 qqqqqqqq rrrrrrrr ssssssss tttttttt</td>
+<td>5</td>
+<td>长度&gt;0x3fff的字节数组，这里的第一个字节前2位必须为10，后6位未定义；之后的4个字节作为整数保存字节数组长度</td>
+</tr>
+<tr>
+<td>11000000</td>
+<td>1</td>
+<td>int16_t，2字节</td>
+</tr>
+<tr>
+<td>11010000</td>
+<td>1</td>
+<td>int32_t，4字节</td>
+</tr>
+<tr>
+<td>11100000</td>
+<td>1</td>
+<td>int64_t，8字节</td>
+</tr>
+<tr>
+<td>11110000</td>
+<td>1</td>
+<td>24位有符号整数，3字节</td>
+</tr>
+<tr>
+<td>11111110</td>
+<td>1</td>
+<td>8位有符号整数，1字节</td>
+</tr>
+<tr>
+<td>1111xxxx</td>
+<td>1</td>
+<td>0-12之间的小整数，这里的xxxx介于0001和1101之间，由于不可以使用0000和1110、1111，所以只能代表0-12，且用的时候需要减一</td>
+</tr>
+<tr>
+<td>11111111</td>
+<td>1</td>
+<td>特殊entry，表示结尾</td>
+</tr>
+</tbody></table>
+<p>由于不同类型的encoding的第一个字节一定不同，因此仅根据第一个字节就可以判断enty的类型。</p>
+<p>ziplist由于涉及压缩（不是值LZF之类的压缩算法），代码多且复杂，故只贴出插入节点相关的逻辑：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">char</span> *<span class="title">ziplistPush</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">char</span> *zl, <span class="keyword">unsigned</span> <span class="keyword">char</span> *s, <span class="keyword">unsigned</span> <span class="keyword">int</span> slen, <span class="keyword">int</span> where)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *p;</span><br><span class="line">    p = (where == ZIPLIST_HEAD) ? ZIPLIST_ENTRY_HEAD(zl) : ZIPLIST_ENTRY_END(zl);</span><br><span class="line">    <span class="keyword">return</span> __ziplistInsert(zl,p,s,slen);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">unsigned</span> <span class="keyword">char</span> *__ziplistInsert(<span class="keyword">unsigned</span> <span class="keyword">char</span> *zl, <span class="keyword">unsigned</span> <span class="keyword">char</span> *p, <span class="keyword">unsigned</span> <span class="keyword">char</span> *s, <span class="keyword">unsigned</span> <span class="keyword">int</span> slen) &#123;</span><br><span class="line">    <span class="keyword">size_t</span> curlen = intrev32ifbe(ZIPLIST_BYTES(zl)), reqlen;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> prevlensize, prevlen = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">size_t</span> offset;</span><br><span class="line">    <span class="keyword">int</span> nextdiff = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> encoding = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> value = <span class="number">123456789</span>;</span><br><span class="line">    zlentry tail;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 插入时需要获得两个信息：插入位置，和前一个entry的length</span></span><br><span class="line">    <span class="keyword">if</span> (p[<span class="number">0</span>] != ZIP_END) &#123; <span class="comment">// 检查是否在队尾</span></span><br><span class="line">        ZIP_DECODE_PREVLEN(p, prevlensize, prevlen); <span class="comment">// 如果不在，则解码前一个entry的长度和长度段的大小</span></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">char</span> *ptail = ZIPLIST_ENTRY_TAIL(zl); <span class="comment">// 尝试跳到队尾的entry</span></span><br><span class="line">        <span class="keyword">if</span> (ptail[<span class="number">0</span>] != ZIP_END) &#123; <span class="comment">// 如果队尾不为ZIP_END，说明队伍非空</span></span><br><span class="line">            prevlen = zipRawEntryLength(ptail); <span class="comment">// 尝试解码最后一个entry的长度</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 尝试压缩，包括两种情况：小整数，或者字符串代表了一个long long 可以表示的整数，比如"-987654321"</span></span><br><span class="line">    <span class="comment">// 从而确定压缩后entry的长度</span></span><br><span class="line">    <span class="keyword">if</span> (zipTryEncoding(s,slen,&amp;value,&amp;encoding)) &#123;</span><br><span class="line">        reqlen = zipIntSize(encoding); <span class="comment">// 可以根据encoding确定长度</span></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        reqlen = slen; <span class="comment">// 否则就是字符串长度</span></span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    reqlen += zipStorePrevEntryLength(<span class="literal">NULL</span>,prevlen); <span class="comment">// 加上存储prevlen需要的长度，传入NULL表示只计算长度而不写入</span></span><br><span class="line">    reqlen += zipStoreEntryEncoding(<span class="literal">NULL</span>,encoding,slen); <span class="comment">// 确定encoding字段的长度，传入NULL表示只计算长度而不写入</span></span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果不在队尾插入，那么需要保证下一个entry的prevlen字段足够长，以保存本entry的长度</span></span><br><span class="line">    <span class="keyword">int</span> forcelarge = <span class="number">0</span>;</span><br><span class="line">    nextdiff = (p[<span class="number">0</span>] != ZIP_END) ? zipPrevLenByteDiff(p,reqlen) : <span class="number">0</span>; <span class="comment">// 计算所需长度和下一个entry的prevlen字段的长度之差</span></span><br><span class="line">    <span class="keyword">if</span> (nextdiff == <span class="number">-4</span> &amp;&amp; reqlen &lt; <span class="number">4</span>) &#123; <span class="comment">// 如果本来下一个entry的prevlen字段长为5字节，而reqlen又很短的话，需要修改相关偏移量</span></span><br><span class="line">        nextdiff = <span class="number">0</span>;</span><br><span class="line">        forcelarge = <span class="number">1</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 计算新的ziplist长度，并realloc</span></span><br><span class="line">    offset = p-zl;</span><br><span class="line">    zl = ziplistResize(zl,curlen+reqlen+nextdiff);</span><br><span class="line">    p = zl+offset;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 如果非队尾插入，则需要移动相关内容并处理一些细节</span></span><br><span class="line">    <span class="keyword">if</span> (p[<span class="number">0</span>] != ZIP_END) &#123;</span><br><span class="line">        memmove(p+reqlen,p-nextdiff,curlen-offset<span class="number">-1</span>+nextdiff);  <span class="comment">// 移动相关内容</span></span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (forcelarge)</span><br><span class="line">            zipStorePrevEntryLengthLarge(p+reqlen,reqlen); <span class="comment">// 调整下一个entry的prevlen字段</span></span><br><span class="line">        <span class="keyword">else</span></span><br><span class="line">            zipStorePrevEntryLength(p+reqlen,reqlen);</span><br><span class="line"></span><br><span class="line">        ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+reqlen); <span class="comment">// 修改整个列表的tail偏移量</span></span><br><span class="line"></span><br><span class="line">        zipEntry(p+reqlen, &amp;tail); <span class="comment">// 解码最后一个entry</span></span><br><span class="line">        <span class="keyword">if</span> (p[reqlen+tail.headersize+tail.len] != ZIP_END) &#123; <span class="comment">// 如果对不上ZIP_END，需要做一些特殊处理</span></span><br><span class="line">            ZIPLIST_TAIL_OFFSET(zl) =                                           <span class="comment">// 至于为啥有可能对不上，官方说和nextdiff有关。。。反正我没想明白</span></span><br><span class="line">                intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+nextdiff);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123; <span class="comment">// 否则直接修改即可</span></span><br><span class="line">        ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(p-zl);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">     <span class="comment">// 如果nextdiff不为0，说明有可能调整下一个entry的长度，进而影响下下个entry的prevlen字段</span></span><br><span class="line">     <span class="comment">// 最坏情况需要把所有entry都调整并移动一遍</span></span><br><span class="line">    <span class="keyword">if</span> (nextdiff != <span class="number">0</span>) &#123;</span><br><span class="line">        offset = p-zl;</span><br><span class="line">        zl = __ziplistCascadeUpdate(zl,p+reqlen);</span><br><span class="line">        p = zl+offset;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 将要写的内容写进去</span></span><br><span class="line">    p += zipStorePrevEntryLength(p,prevlen);</span><br><span class="line">    p += zipStoreEntryEncoding(p,encoding,slen);</span><br><span class="line">    <span class="keyword">if</span> (ZIP_IS_STR(encoding)) &#123;</span><br><span class="line">        <span class="built_in">memcpy</span>(p,s,slen);</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        zipSaveInteger(p,value,encoding);</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="comment">// 计算调整entry总量</span></span><br><span class="line">    ZIPLIST_INCR_LENGTH(zl,<span class="number">1</span>);</span><br><span class="line">    <span class="keyword">return</span> zl;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>其实本质上和数组扩容类似，但由于entry之间有一定关联，需要注意的细节很多，所以代码很长</p>
+<h2 id="快速列表（quicklist）"><a href="#快速列表（quicklist）" class="headerlink" title="快速列表（quicklist）"></a>快速列表（quicklist）</h2><p>当前版本的redis基本只使用quicklist作为列表的底层实现，之前采用双向链表和ziplist实现，并且在一定条件下会将ziplist转换为双向链表，而自然也可以想到将ziplist用链表的方式连接起来获得一个折中的做法，提高内存利用率和效率，其定义在quicklist.h中，如下，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">quicklistNode</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">quicklistNode</span> *<span class="title">prev</span>;</span> <span class="comment">// 前驱节点</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">quicklistNode</span> *<span class="title">next</span>;</span> <span class="comment">// 后继节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *zl; <span class="comment">// 指向具体数据的指针，可以是ziplist，也可以是压缩后的数据</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> sz; <span class="comment">// ziplist的字节数，无论是否压缩，都表示未压缩前的字节数</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> count : <span class="number">16</span>;     <span class="comment">// ziplist中的entry数。这里的冒号是C的一个语法，表示占16位而非字节，下同</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> encoding : <span class="number">2</span>;   <span class="comment">// 压缩方式，1表示不压缩，2表示使用LZF算法</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> container : <span class="number">2</span>;  <span class="comment">// zl指向的数据结构，目前取值只能是2，表示是ziplist</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> recompress : <span class="number">1</span>; <span class="comment">// 当前ziplist是否已被解压</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> attempted_compress : <span class="number">1</span>; <span class="comment">// 测试用</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> extra : <span class="number">10</span>; <span class="comment">// 保留字节</span></span><br><span class="line">&#125; quicklistNode; <span class="comment">// 强制对齐，共32字节</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">quicklistLZF</span> &#123;</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> sz; <span class="comment">// 压缩后的字节数</span></span><br><span class="line">    <span class="keyword">char</span> compressed[]; <span class="comment">// 压缩后的数据</span></span><br><span class="line">&#125; quicklistLZF; <span class="comment">// LZF压缩节点</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">quicklist</span> &#123;</span></span><br><span class="line">    quicklistNode *head; <span class="comment">// 头节点</span></span><br><span class="line">    quicklistNode *tail; <span class="comment">// 尾节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> count; <span class="comment">// 总entry数量</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> len; <span class="comment">// 一共有多少个quicklistNode</span></span><br><span class="line">    <span class="keyword">int</span> fill : <span class="number">16</span>; <span class="comment">// 一个参数，用来某个ziplist节点能够容纳多少数据项，默认是-2</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> compress : <span class="number">16</span>; <span class="comment">// 压缩深度，为正时表示启用压缩，当quicklistNode总数大于等于quicklist-&gt;compress*2时开始压缩</span></span><br><span class="line">&#125; quicklist; <span class="comment">// 共40字节</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">quicklistIter</span> &#123;</span></span><br><span class="line">    <span class="keyword">const</span> quicklist *quicklist; <span class="comment">// quicklist指针</span></span><br><span class="line">    quicklistNode *current; <span class="comment">// 当前的quicklistNode节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *zi; <span class="comment">// 指向ziplist中某个entry的指针</span></span><br><span class="line">    <span class="keyword">long</span> offset; <span class="comment">// ziplist中的偏移，如果zi为空，则使用offset</span></span><br><span class="line">    <span class="keyword">int</span> direction; <span class="comment">// 方向</span></span><br><span class="line">&#125; quicklistIter; <span class="comment">// quicklist的迭代器</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">quicklistEntry</span> &#123;</span></span><br><span class="line">    <span class="keyword">const</span> quicklist *quicklist; <span class="comment">// quicklist指针</span></span><br><span class="line">    quicklistNode *node; <span class="comment">// 指向的节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *zi; <span class="comment">// 指向的ziplist中的指针</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">char</span> *value; <span class="comment">// 具体的值，如果是字符串</span></span><br><span class="line">    <span class="keyword">long</span> <span class="keyword">long</span> longval; <span class="comment">// 具体的值，如果是整数</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> sz; <span class="comment">// 当前ziplist的大小</span></span><br><span class="line">    <span class="keyword">int</span> offset; <span class="comment">// ziplist中的偏移</span></span><br><span class="line">&#125; quicklistEntry; <span class="comment">// quicklist中的某个entry</span></span><br></pre></td></tr></table></figure>
+
+<p>其中比较重要的参数是quicklist中的fill和compress，前者取值为正时代表ziplist内部的节点数量，最大为0xFFFF，为负时只能取值-1～-5，分别代表每个ziplist节点的字节数不能超过4kb、8kb、16kb、32kb、64kb。后者表示压缩因子，在LZF算法中取值为0～10。由于头尾节点使用比较频繁，因此头尾节点永远不会被压缩。</p>
+<p>由于涉及ziplist和压缩，quicklist的读写操作都比较麻烦，以下是头部插入的代码，话说我还是不太明白为什么插入时会解压缩途经节点。。。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="meta-keyword">define</span> likely(x) __builtin_expect(!!(x), 1) <span class="comment">// 这是GCC提供的一个特殊指令，主要用来优化cpu的分支预测，这条语句告诉编译器x为真的可能像很大(unlikely类似)，因此如果将这部分语句放到判断语句后，可以降低cpu流水线被破坏的几率</span></span></span><br><span class="line"><span class="meta">#<span class="meta-keyword">define</span> unlikely(x) __builtin_expect(!!(x), 0) <span class="comment">// 但从外部看，可以认为if (likely(x))&#123;&#125; 等价于if(x)&#125;&#123;&#125;，</span></span></span><br><span class="line"></span><br><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="keyword">size_t</span> optimization_level[] = &#123;<span class="number">4096</span>, <span class="number">8192</span>, <span class="number">16384</span>, <span class="number">32768</span>, <span class="number">65536</span>&#125;; <span class="comment">// fill为负时的限制，4kb~64kb</span></span><br><span class="line"></span><br><span class="line">REDIS_STATIC <span class="keyword">int</span></span><br><span class="line">_quicklistNodeSizeMeetsOptimizationRequirement(<span class="keyword">const</span> <span class="keyword">size_t</span> sz, <span class="comment">// 校验fill为负时是否允许继续在当前ziplist插入</span></span><br><span class="line">                                               <span class="keyword">const</span> <span class="keyword">int</span> fill) &#123;</span><br><span class="line">    <span class="keyword">if</span> (fill &gt;= <span class="number">0</span>)</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">size_t</span> offset = (-fill) - <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">if</span> (offset &lt; (<span class="keyword">sizeof</span>(optimization_level) / <span class="keyword">sizeof</span>(*optimization_level))) &#123; <span class="comment">// 数组越界检测</span></span><br><span class="line">        <span class="keyword">if</span> (sz &lt;= optimization_level[offset]) &#123; <span class="comment">// 是否超过限制</span></span><br><span class="line">            <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">REDIS_STATIC <span class="keyword">int</span> _quicklistNodeAllowInsert(<span class="keyword">const</span> quicklistNode *node, <span class="comment">// 判断这个节点是否能够插入</span></span><br><span class="line">                                           <span class="keyword">const</span> <span class="keyword">int</span> fill, <span class="keyword">const</span> <span class="keyword">size_t</span> sz) &#123;</span><br><span class="line">    <span class="keyword">if</span> (unlikely(!node))</span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">int</span> ziplist_overhead;</span><br><span class="line">    <span class="comment">// 之前提到，ziplist中插入的节点需要保存前一个节点的size，所以这里算的时候要算上这部分大小</span></span><br><span class="line">    <span class="keyword">if</span> (sz &lt; <span class="number">254</span>)</span><br><span class="line">        ziplist_overhead = <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        ziplist_overhead = <span class="number">5</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (sz &lt; <span class="number">64</span>)</span><br><span class="line">        ziplist_overhead += <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (likely(sz &lt; <span class="number">16384</span>))</span><br><span class="line">        ziplist_overhead += <span class="number">2</span>;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        ziplist_overhead += <span class="number">5</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> new_sz = node-&gt;sz + sz + ziplist_overhead; <span class="comment">// 新节点的大小</span></span><br><span class="line">    <span class="keyword">if</span> (likely(_quicklistNodeSizeMeetsOptimizationRequirement(new_sz, fill))) <span class="comment">// 如果fill为负且没超过ziplist单节点限制</span></span><br><span class="line">        <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (!sizeMeetsSafetyLimit(new_sz)) <span class="comment">// 每一项数据最大字节数限制，redis写死是8192</span></span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> ((<span class="keyword">int</span>)node-&gt;count &lt; fill) <span class="comment">// 如果当前节点的项目数小于fill</span></span><br><span class="line">        <span class="keyword">return</span> <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">quicklistPushHead</span><span class="params">(quicklist *quicklist, <span class="keyword">void</span> *value, <span class="keyword">size_t</span> sz)</span> </span>&#123; <span class="comment">// 原始数据，未压缩</span></span><br><span class="line">    quicklistNode *orig_head = quicklist-&gt;head;</span><br><span class="line">    <span class="keyword">if</span> (likely( <span class="comment">// 如果允许插入新节点</span></span><br><span class="line">            _quicklistNodeAllowInsert(quicklist-&gt;head, quicklist-&gt;fill, sz))) &#123; <span class="comment">// 假如每一项都比较小，那么一般来说还是能成功的</span></span><br><span class="line">        quicklist-&gt;head-&gt;zl =</span><br><span class="line">            ziplistPush(quicklist-&gt;head-&gt;zl, value, sz, ZIPLIST_HEAD); <span class="comment">// 在这个ziplist里插入数据</span></span><br><span class="line">        quicklistNodeUpdateSz(quicklist-&gt;head); <span class="comment">// 更新这个节点的大小</span></span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        quicklistNode *node = quicklistCreateNode(); <span class="comment">// 否则创建一个新节点</span></span><br><span class="line">        node-&gt;zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD); <span class="comment">// 插入数据</span></span><br><span class="line"></span><br><span class="line">        quicklistNodeUpdateSz(node); <span class="comment">// 并更新quicklistNode的数据</span></span><br><span class="line">        _quicklistInsertNodeBefore(quicklist, quicklist-&gt;head, node); <span class="comment">// quicklistNode的插入操作，这个操作可能会导致压缩</span></span><br><span class="line">    &#125;</span><br><span class="line">    quicklist-&gt;count++;</span><br><span class="line">    quicklist-&gt;head-&gt;count++;</span><br><span class="line">    <span class="keyword">return</span> (orig_head != quicklist-&gt;head);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">REDIS_STATIC <span class="keyword">void</span> __quicklistCompress(<span class="keyword">const</span> quicklist *quicklist, <span class="comment">// 节点压缩</span></span><br><span class="line">                                      quicklistNode *node) &#123;</span><br><span class="line">    <span class="keyword">if</span> (!quicklistAllowsCompression(quicklist) || <span class="comment">// 当quicklistNode总数大于等于quicklist-&gt;compress*2时开始压缩</span></span><br><span class="line">        quicklist-&gt;len &lt; (<span class="keyword">unsigned</span> <span class="keyword">int</span>)(quicklist-&gt;compress * <span class="number">2</span>)) <span class="comment">// redis假设头尾节点操作频繁，如果链表数太少，会导致频繁的压缩/解压缩，因此当节点较少的时候最好不压缩</span></span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/* Iterate until we reach compress depth for both sides of the list.a</span></span><br><span class="line"><span class="comment">     * Note: because we do length checks at the *top* of this function,</span></span><br><span class="line"><span class="comment">     *       we can skip explicit null checks below. Everything exists. */</span></span><br><span class="line">    quicklistNode *forward = quicklist-&gt;head;</span><br><span class="line">    quicklistNode *reverse = quicklist-&gt;tail;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 这里同时从头指针和尾指针开始向中间走，直至相遇</span></span><br><span class="line">    <span class="comment">// 从而计算得到当前链表的深度</span></span><br><span class="line">    <span class="keyword">int</span> depth = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">int</span> in_depth = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">while</span> (depth++ &lt; quicklist-&gt;compress) &#123;</span><br><span class="line">        quicklistDecompressNode(forward); <span class="comment">// 没懂这里为什么要解压缩途经节点</span></span><br><span class="line">        quicklistDecompressNode(reverse); <span class="comment">// 至少当前函数内没有用到途经节点的数据</span></span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (forward == node || reverse == node)</span><br><span class="line">            in_depth = <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (forward == reverse) <span class="comment">// 如果没找到当前节点，则返回</span></span><br><span class="line">            <span class="keyword">return</span>;</span><br><span class="line"></span><br><span class="line">        forward = forward-&gt;next;</span><br><span class="line">        reverse = reverse-&gt;prev;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (!in_depth) <span class="comment">// 如果足够深，则尝试压缩当前节点</span></span><br><span class="line">        quicklistCompressNode(node);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (depth &gt; <span class="number">2</span>) &#123;</span><br><span class="line">        quicklistCompressNode(forward); <span class="comment">// 重新压缩</span></span><br><span class="line">        quicklistCompressNode(reverse);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="整数集合（intset）"><a href="#整数集合（intset）" class="headerlink" title="整数集合（intset）"></a>整数集合（intset）</h2><p>整数集合是集合键的底层实现之一，当一个集合只包含整数值元素，且数量不多时，会采用整数集合作为集合键的底层实现。intset被定义在<code>intset.h</code>中，</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">intset</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint32_t</span> encoding; <span class="comment">// 编码方式，取值为INTSET_ENC_INT64、INTSET_ENC_INT32和INTSET_ENC_INT16</span></span><br><span class="line">    <span class="keyword">uint32_t</span> length;    <span class="comment">// contents的长度</span></span><br><span class="line">    <span class="keyword">int8_t</span> contents[];  <span class="comment">// 实际内容，从小到大排列的整数，且不重复</span></span><br><span class="line">&#125; intset;</span><br></pre></td></tr></table></figure>
+
+<p><code>contents</code>类型被声明为<code>int8_t</code>，但如何解读取决于<code>encoding</code>属性，简单来说根据<code>encoding</code>来将<code>contents</code>作为<code>int16_t[]</code>、<code>int32[]</code>、<code>int64[]</code>来处理。</p>
+<p>一个比较麻烦的地方在于如果新插入的元素比当前所有的元素占用的空间大（比如把int8_t替换为int16_t），那么redis的做法是将原数组所有元素类型升级为和新元素一样大，这个操作被称为升级（upgrade），估计是因为这么搞比较简单，大概也是图省事，intset不支持降级。其他基本上增、删、改、（二分）查等一系列操作和普通的有序数组没什么区别，这里就略过了。</p>
+<h2 id="有序集合-跳表（skiplist）"><a href="#有序集合-跳表（skiplist）" class="headerlink" title="有序集合/跳表（skiplist）"></a>有序集合/跳表（skiplist）</h2><p>redis采用跳表作为底层数据结构来实现有序集合，基本原理如下图，简单来说最底层是一串有序链表，然后按层数加索引。每个索引节点类似B+树，将所辖区间分成若干份，查找的时候根据要查找的值选择下层节点。</p>
+<p>值得注意的是有序集合<code>zset</code>元素的唯一性由<code>dict</code>保证，<code>zskiplist</code>只保证按score有序排列</p>
+<p><img src="/images/Skip_list_add_element-en.gif" alt="跳表原理"></p>
+<p>redis中相关结构体定义在<code>server.h</code>中，如下</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> &#123;</span></span><br><span class="line">    sds ele;              <span class="comment">// 具体的对象，默认字节流</span></span><br><span class="line">    <span class="keyword">double</span> score; <span class="comment">// 节点根据score排序</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> *<span class="title">backward</span>;</span>  <span class="comment">// 上一个节点的指针</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistLevel</span> &#123;</span>                        <span class="comment">// 层级</span></span><br><span class="line">        <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> *<span class="title">forward</span>;</span> <span class="comment">// 同层级下一个的指针</span></span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">long</span> span;                     <span class="comment">// 跨度</span></span><br><span class="line">    &#125; level[];                                                  <span class="comment">// 可变层级</span></span><br><span class="line">&#125; zskiplistNode;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">zskiplist</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">zskiplistNode</span> *<span class="title">header</span>, *<span class="title">tail</span>;</span>  <span class="comment">// 头节点和尾节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> length;                           <span class="comment">// 总大小</span></span><br><span class="line">    <span class="keyword">int</span> level;                                                      <span class="comment">// 最高层高</span></span><br><span class="line">&#125; zskiplist;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> <span class="title">zset</span> &#123;</span> <span class="comment">// 有序集合，包含一个字典和一个跳表</span></span><br><span class="line">    dict *dict;</span><br><span class="line">    zskiplist *zsl;</span><br><span class="line">&#125; zset;</span><br><span class="line"></span><br><span class="line"><span class="keyword">typedef</span> <span class="class"><span class="keyword">struct</span> &#123;</span></span><br><span class="line">    <span class="keyword">double</span> min, max; <span class="comment">// 范围</span></span><br><span class="line">    <span class="keyword">int</span> minex, maxex; <span class="comment">// 是否包含最大最小值</span></span><br><span class="line">&#125; zrangespec;</span><br></pre></td></tr></table></figure>
+
+<p>可以看到，有序集合中，集合（不重复）是由<code>dict</code>实现的，而有序是由<code>zskiplist</code>实现的。一个比较奇葩的地方在于redis使用double来作为排序依据，而至少我没看到redis对score做了哪些特殊处理，甚至直接用<code>==</code>来比较两个double类型的参数。所以个人感觉以单score而非range的操作可能都会出问题，相同score的排序可能也有问题，但这里暂且不谈。其初始化流程如下，核心在于header节点的层级需要设为<code>ZSKIPLIST_MAXLEVEL</code>，以便可以直接从header节点开始能查找到任意节点。其实按说应该将header的score设置为<code>-MAX_DOUBLE</code>之类的值，但redis后面比较的时候并没有用到header的score，所以其实无所谓。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">zskiplistNode *<span class="title">zslCreateNode</span><span class="params">(<span class="keyword">int</span> level, <span class="keyword">double</span> score, sds ele)</span> </span>&#123;</span><br><span class="line">    zskiplistNode *zn =</span><br><span class="line">        zmalloc(<span class="keyword">sizeof</span>(*zn)+level*<span class="keyword">sizeof</span>(struct zskiplistLevel));</span><br><span class="line">    zn-&gt;score = score;</span><br><span class="line">    zn-&gt;ele = ele;</span><br><span class="line">    <span class="keyword">return</span> zn;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">zskiplist *<span class="title">zslCreate</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">int</span> j;</span><br><span class="line">    zskiplist *zsl;</span><br><span class="line"></span><br><span class="line">    zsl = zmalloc(<span class="keyword">sizeof</span>(*zsl));</span><br><span class="line">    zsl-&gt;level = <span class="number">1</span>;</span><br><span class="line">    zsl-&gt;length = <span class="number">0</span>;</span><br><span class="line">    zsl-&gt;header = zslCreateNode(ZSKIPLIST_MAXLEVEL,<span class="number">0</span>,<span class="literal">NULL</span>);</span><br><span class="line">    <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; ZSKIPLIST_MAXLEVEL; j++) &#123;</span><br><span class="line">        zsl-&gt;header-&gt;level[j].forward = <span class="literal">NULL</span>;</span><br><span class="line">        zsl-&gt;header-&gt;level[j].span = <span class="number">0</span>;</span><br><span class="line">    &#125;</span><br><span class="line">    zsl-&gt;header-&gt;backward = <span class="literal">NULL</span>;</span><br><span class="line">    zsl-&gt;tail = <span class="literal">NULL</span>;</span><br><span class="line">    <span class="keyword">return</span> zsl;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>查找流程很容易理解，按level从高向低查，然后从左向右查。假设要查找的score为s<sub>target</sub>，当前节点为A，正在查找第k level，下一个节点是B，那么</p>
+<ol>
+<li>如果当前节点已经查到目标score，则直接返回</li>
+<li>如果s<sub>B</sub>&lt;s<sub>target</sub>，则移动到B，转1</li>
+<li>如果level已经是0（走到最下层）则表明查找失败</li>
+<li>令level-=1，转2</li>
+</ol>
+<p>严格来说redis排序是先按score排序，如果score相同，则按元素的值<code>ele</code>排序。由于元素是唯一的，所以skiplist一定是单调递增的。</p>
+<p>可能是因为double精度的问题，或者同一个score可以有多个元素，redis不能直接根据score获得某个值，只能按查找range，其实流程也差不多。不过跳表的一个好处是可以在查找时计算出目标score的rank（在skiplist中的顺位），因为每个节点保存了<code>span</code>（区间内元素数量），那么向右走的时候累计<code>span</code>就可以获得rank</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">unsigned</span> <span class="keyword">long</span> <span class="title">zslGetRank</span><span class="params">(zskiplist *zsl, <span class="keyword">double</span> score, sds ele)</span> </span>&#123;</span><br><span class="line">    zskiplistNode *x;</span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> rank = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">int</span> i;</span><br><span class="line"></span><br><span class="line">    x = zsl-&gt;header;</span><br><span class="line">    <span class="keyword">for</span> (i = zsl-&gt;level<span class="number">-1</span>; i &gt;= <span class="number">0</span>; i--) &#123; <span class="comment">// 向下走</span></span><br><span class="line">        <span class="keyword">while</span> (x-&gt;level[i].forward &amp;&amp; <span class="comment">// 如果能向右走</span></span><br><span class="line">            (x-&gt;level[i].forward-&gt;score &lt; score || <span class="comment">// 右边的节点比当前节点score小</span></span><br><span class="line">                (x-&gt;level[i].forward-&gt;score == score &amp;&amp; <span class="comment">// 或者相等，但ele值比当前目标值小或相等</span></span><br><span class="line">                sdscmp(x-&gt;level[i].forward-&gt;ele,ele) &lt;= <span class="number">0</span>))) &#123;</span><br><span class="line">            rank += x-&gt;level[i].span; <span class="comment">// 累计当前节点当前层的span</span></span><br><span class="line">            x = x-&gt;level[i].forward; <span class="comment">// 向右走</span></span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        <span class="comment">// 当前节点可能已经找到了，那么就直接返回</span></span><br><span class="line">        <span class="comment">// 但由于header的ele可以为Null，且header实际是无效的，所以还是要检查一下是否是x-&gt;ele是否为空</span></span><br><span class="line">        <span class="keyword">if</span> (x-&gt;ele &amp;&amp; sdscmp(x-&gt;ele,ele) == <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">return</span> rank;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>最后是插入节点，首先查找到目标位置，然后增加一个节点，此节点的level是随机出来的，创建出来后和前后节点连接起来，并更新相关的span值。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">zslRandomLevel</span><span class="params">(<span class="keyword">void</span>)</span> </span>&#123; <span class="comment">// 随机层级</span></span><br><span class="line">    <span class="keyword">int</span> level = <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">while</span> ((random()&amp;<span class="number">0xFFFF</span>) &lt; (ZSKIPLIST_P * <span class="number">0xFFFF</span>)) <span class="comment">// 取一个0~0xFFFF之间的随机数，和一个常数（这里是0.25*0xFFFF）比，如果测试通过就+1</span></span><br><span class="line">        level += <span class="number">1</span>; <span class="comment">// 合理性且不论，但基本上层级越高概率越低</span></span><br><span class="line">    <span class="keyword">return</span> (level&lt;ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL; <span class="comment">// 然后取不大于最高level的返回值</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function">zskiplistNode *<span class="title">zslInsert</span><span class="params">(zskiplist *zsl, <span class="keyword">double</span> score, sds ele)</span> </span>&#123;</span><br><span class="line">    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;  <span class="comment">// 要更新的所有节点</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">int</span> rank[ZSKIPLIST_MAXLEVEL];  <span class="comment">// rank排行，表示这个节点在有序集合中的顺序</span></span><br><span class="line">    <span class="keyword">int</span> i, level;</span><br><span class="line"></span><br><span class="line">    serverAssert(!isnan(score));</span><br><span class="line">    x = zsl-&gt;header;</span><br><span class="line">    <span class="keyword">for</span> (i = zsl-&gt;level<span class="number">-1</span>; i &gt;= <span class="number">0</span>; i--) &#123;</span><br><span class="line">        rank[i] = i == (zsl-&gt;level<span class="number">-1</span>) ? <span class="number">0</span> : rank[i+<span class="number">1</span>]; </span><br><span class="line">        <span class="keyword">while</span> (x-&gt;level[i].forward &amp;&amp;</span><br><span class="line">                (x-&gt;level[i].forward-&gt;score &lt; score ||</span><br><span class="line">                    (x-&gt;level[i].forward-&gt;score == score &amp;&amp;</span><br><span class="line">                    sdscmp(x-&gt;level[i].forward-&gt;ele,ele) &lt; <span class="number">0</span>)))</span><br><span class="line">        &#123;</span><br><span class="line">            rank[i] += x-&gt;level[i].span;  <span class="comment">// 第i层的rank</span></span><br><span class="line">            x = x-&gt;level[i].forward;</span><br><span class="line">        &#125;</span><br><span class="line">        update[i] = x; <span class="comment">// 意味着我们的新节点在i层的后继节点是update[i]，并且一定会更新update[i].span</span></span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    level = zslRandomLevel(); <span class="comment">// 随机拿到一个层级</span></span><br><span class="line">    <span class="keyword">if</span> (level &gt; zsl-&gt;level) &#123; <span class="comment">// 如果刚好比已知的层级都高，那么需要更新header节点</span></span><br><span class="line">        <span class="keyword">for</span> (i = zsl-&gt;level; i &lt; level; i++) &#123;</span><br><span class="line">            rank[i] = <span class="number">0</span>;</span><br><span class="line">            update[i] = zsl-&gt;header;</span><br><span class="line">            update[i]-&gt;level[i].span = zsl-&gt;length; <span class="comment">// 注意，这个时候还没有插入新节点，所以这些层的span是所有节点数</span></span><br><span class="line">        &#125;</span><br><span class="line">        zsl-&gt;level = level;</span><br><span class="line">    &#125;</span><br><span class="line">    x = zslCreateNode(level,score,ele); <span class="comment">// 创建一个新节点</span></span><br><span class="line">    <span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; level; i++) &#123;</span><br><span class="line">        x-&gt;level[i].forward = update[i]-&gt;level[i].forward; <span class="comment">// 连接相同层级上的链表</span></span><br><span class="line">        update[i]-&gt;level[i].forward = x; <span class="comment">// 其实就是链表插入操作</span></span><br><span class="line"></span><br><span class="line">        x-&gt;level[i].span = update[i]-&gt;level[i].span - (rank[<span class="number">0</span>] - rank[i]); <span class="comment">// 调整span信息</span></span><br><span class="line">        update[i]-&gt;level[i].span = (rank[<span class="number">0</span>] - rank[i]) + <span class="number">1</span>; <span class="comment">// </span></span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">for</span> (i = level; i &lt; zsl-&gt;level; i++) &#123; <span class="comment">// 加上新节点带来的span</span></span><br><span class="line">        update[i]-&gt;level[i].span++;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// // 设置其他信息</span></span><br><span class="line">    x-&gt;backward = (update[<span class="number">0</span>] == zsl-&gt;header) ? <span class="literal">NULL</span> : update[<span class="number">0</span>]; </span><br><span class="line">    <span class="keyword">if</span> (x-&gt;level[<span class="number">0</span>].forward)</span><br><span class="line">        x-&gt;level[<span class="number">0</span>].forward-&gt;backward = x;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        zsl-&gt;tail = x;</span><br><span class="line">    zsl-&gt;length++;</span><br><span class="line">    <span class="keyword">return</span> x;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/29/redis-read1/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1498,322 +1726,11 @@
 
       
     
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/02/jvm4/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/09/02/jvm4/" class="post-title-link" itemprop="url">JVM学习（4）类文件结构</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-09-02 00:00:00" itemprop="dateCreated datePublished" datetime="2019-09-02T00:00:00+08:00">2019-09-02</time>
-            </span>
-          
-            
-
-            
-              <span class="post-meta-item">
-                <span class="post-meta-item-icon">
-                  <i class="fa fa-calendar-check-o"></i>
-                </span>
-                <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2019-09-05 18:24:17" itemprop="dateModified" datetime="2019-09-05T18:24:17+08:00">2019-09-05</time>
-              </span>
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>为了实现“Write Once, Run Anywhere”，JVM支持运行.class格式的字节码文件，这样可以保证JVM的平台无关性和语言无关性：即不管什么语言，只要能编译为符合规范的.class文件，就可以在JVM上运行。</p>
-<h2 id="class类文件结构"><a href="#class类文件结构" class="headerlink" title="class类文件结构"></a>class类文件结构</h2><p>任何一个class文件都对应着唯一一个类或接口的定义信息。当然一来JVM可以动态生成class，不一定每个类都对应着一个.class文件；二来一个java源代码里可以定义多个类，每个类（包括子类）实际上都会生成一个.class文件。</p>
-<p>一个典型的class文件分为：MagicNumber，Version，Constant_pool，Access_flag，This_class，Super_class，Interfaces，Fields，Methods 和Attributes这十个部分：</p>
-<table>
-<thead>
-<tr>
-<th>类型</th>
-<th align="center">名称</th>
-<th align="center">数量</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>u4</td>
-<td align="center">magic</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">minor_version</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">major</td>
-<td align="center">_version</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">constant_pool_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>cp_info</td>
-<td align="center">constant_pool</td>
-<td align="center">constant_pool_count-1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">access_flags</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">this_class</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">super_class</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">interfaces_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">interfaces</td>
-<td align="center">interfaces_count</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">fields_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>field_info</td>
-<td align="center">fields</td>
-<td align="center">fields_count</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">methods_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>method_info</td>
-<td align="center">methods</td>
-<td align="center">methods_count</td>
-</tr>
-<tr>
-<td>u2</td>
-<td align="center">attributes_count</td>
-<td align="center">1</td>
-</tr>
-<tr>
-<td>attribute_info</td>
-<td align="center">attributes</td>
-<td align="center">attributes_count</td>
-</tr>
-</tbody></table>
-<p>其中u1, u2, u4,u8分别表示1、2、4、8字节长度的标量，且以big-endian的方式保存。</p>
-<p>不定长的区域，比如constant_pool，method_info等，基本都是count+info[count]这种形式。</p>
-<p>先写一个示例代码：</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> java.io.Serializable;</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">class</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Serializable</span> </span>&#123;</span><br><span class="line">  <span class="keyword">protected</span> <span class="keyword">int</span> hello1;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello1</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello1;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">Child</span> <span class="keyword">extends</span> <span class="title">Base</span> <span class="keyword">implements</span> <span class="title">Comparable</span>&lt;<span class="title">Child</span>&gt;</span>&#123;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="keyword">long</span> serialVersionUID = -<span class="number">3911120229867216339L</span>;</span><br><span class="line">  <span class="keyword">private</span> <span class="keyword">transient</span> <span class="keyword">int</span> hello2;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title">setHello2</span><span class="params">(<span class="keyword">int</span> hello2)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">this</span>.hello2 = hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">getHello2</span><span class="params">()</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> hello2;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">int</span> <span class="title">compareTo</span><span class="params">(Child o)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">this</span>.hello2 - o.hello2;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>注意这段代码编译后生成两个class文件，这里只分析<a href="/files/Child.class">Child.class</a>。可以先用<code>javap -v -p -s -sysinfo -constants Child</code>看一下基本框架。然后依次分析每个区域。</p>
-<h2 id="Magic-Numbers和版本号"><a href="#Magic-Numbers和版本号" class="headerlink" title="Magic Numbers和版本号"></a>Magic Numbers和版本号</h2><p>魔数，.class文件必须以0xcafebabe开头，这个跟.jpeg之类的文件类似。</p>
-<p>接下来4个字节是版本号，其中后两个字节是主版本号，这里是0x0031，对应JDK1.5.0_11版本。一般高版本的JVM兼容低版本的.class文件，但反过来不行。</p>
-<h2 id="常量池"><a href="#常量池" class="headerlink" title="常量池"></a>常量池</h2><p>接下来是常量池（constant pool）部分，2字节的数字表示一共有多少个常量，接下来一共有constant_pool_count-1个实际常量。这里一共有0x002a-1=42-1=41个常量。且常量池索引以1开始，0被用来表示“不引用任何一个常量池项目”。</p>
-<p>常量池主要包含两部分：字面量（literal）和符号引用（symbolic references）。字面量比如文本字符串、声明为final的常量值等。符号引用包含三部分：</p>
-<ul>
-<li>类和接口的全限定名（full qualified name）</li>
-<li>字段的名称和描述符（descriptor）</li>
-<li>方法的名称和描述符</li>
-</ul>
-<p>每个常量以1字节的类型描述开始，然后按这个类型定义的表去填充数据，具体参考<a href="https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html" target="_blank" rel="noopener">The class File Format</a>。以刚才编译好的.class文件为例，跳过重复的类型，大概有以下几个部分：</p>
-<ul>
-<li>第1个常量是<code>0a 0006 0023</code>，对应CONSTANT_Methodref_info，两个index分别指向第6和第35个常量，表明这个方法在第6个常量表示的类（Base），具体的名称和描述符参考第35个常量（<code>&quot;&lt;init&gt;&quot;:()V</code>）</li>
-<li>第2个常量是<code>09 0004 0024</code>，对应CONSTANT_Fieldref_info，与CONSTANT_Methodref_info类似，表明这个字段在第4个常量表示的类（Child），具体的名称和描述符参考第36个常量（<code>hello2:I</code>）</li>
-<li>第4个常量是<code>07 0026</code>，对应CONSTANT_Class_info，这个类的名称指向第38个常量，这个常量是个字符串，值为<code>Child</code></li>
-<li>第8个常量是<code>01 0010 73657269616c56657273696f6e554944</code>，对应CONSTANT_Utf8_info，是一个utf8字符串，此字符串长为16（32字节），用python3的<code>bytes.fromhex(&quot;73657269616c56657273696f6e554944&quot;)</code>解码得到字符串是<code>serialVersionUID</code></li>
-<li>第11个常量是<code>05 c9b8e8df78eba22d</code>，对应CONSTANT_Long_info，是一个long型常量，对应十进制数字为<code>-3911120229867216339</code></li>
-<li>第35个常量是<code>0c 000f 0010</code>，对应CONSTANT_NameAndType_info，表示它的名字为第15个常量（<code>&lt;init&gt;</code>），类型为第16个常量<code>()V</code></li>
-</ul>
-<p>总的来说常量池还是以字符串、数字为主。</p>
-<h2 id="访问标志"><a href="#访问标志" class="headerlink" title="访问标志"></a>访问标志</h2><p>常量池结束后是两个字节的访问标志，用以声明这个类/接口/注解…的访问类型。这个类是0x0021，为<code>ACC_PUBLIC|ACC_SUPER</code>，ACC_PUBLIC容易理解，即这个类声明为public的；而ACC_SUPER主要是为了向下兼容，因为invokespecial这个指令的语义在JDK1.0.2发生过变化（可以参考<a href="https://blog.csdn.net/xinaij/article/details/38872851" target="_blank" rel="noopener">ACC_SUPER和早期的invokespecial</a>），那么新版JDK编译出来的类都需要带上这个flag。</p>
-<h2 id="类索引、父类索引和接口索引集合"><a href="#类索引、父类索引和接口索引集合" class="headerlink" title="类索引、父类索引和接口索引集合"></a>类索引、父类索引和接口索引集合</h2><p>还是指向常量池的信息，这里类是第4个常量（Child类），父类是第6个常量（Base类）。由于所有java class都至少有个一个基类Object，故父类索引一定不为0。</p>
-<p>这个类的接口集合大小为1，之后是一系列2字节的常量索引（长度为1），可以看到Child类继承了7号常量描述的接口（java/lang/Comparable）。</p>
-<h2 id="字段表集合"><a href="#字段表集合" class="headerlink" title="字段表集合"></a>字段表集合</h2><p>相比于接口，字段包含的信息比较多，除了名字和类型外，还包含诸如是否被static、final、public、volatile等修饰符修饰等信息。因此一个字段被定义为</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">field_info &#123;</span><br><span class="line">  u2 access_flags;</span><br><span class="line">  u2 name_index;</span><br><span class="line">  u2 descriptor_index;</span><br><span class="line">  u2 attributes_count;</span><br><span class="line">  attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>这里一共有2个字段，第一个字段为<code>001A 0008 0009 0001 000A 00000002 000B</code>，被声明为<code>0x1A=ACC_PRIVATE|ACC_STATIC|ACC_FINAL</code>，名称为第8个常量（字符串<code>serialVersionUID</code>），描述符为第9个常量（字符串<code>J</code>，表示基本类型long）。</p>
-<p>所谓描述符(descriptor)是描述字段的数据类型、方法的参数列表（包括数量、类型、顺序）和返回值。基本类型和void都用一个大写字母表示，而对象用L+对象的全限定名来表示，比如<code>Ljava/lang/Object;</code>（一般全限定名后加个分号以示区分）。数组则是加个<code>[</code>，比如<code>[[Ljava/lang/String;</code>表示<code>String[][]</code>这样的二位数组，<code>[I</code>表示<code>int[]</code>这样的int数组。描述方法时，先写参数列表，后写返回值。例如方法<code>int indexOf(char[] source, int sourceOffset, char[] target, int targetOffset, int targetCount, int from Index)</code>的描述符为<code>([CII[CIII]])I</code>。</p>
-<p>最后，这个字段包含1个属性（attribute），属性用来保存一些额外信息，每个attribute_info被定义为</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">attribute_info &#123;</span><br><span class="line">     u2 attribute_name_index;</span><br><span class="line">     u4 attribute_length;</span><br><span class="line">     u1 info[attribute_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>可以看到这个字段有一个attribute_info，name为第10个常量<code>ConstantValue</code>，其内容长为2字节，但需要联合起来表示指向第11个常量(一个long型的数字-3911120229867216339l)。</p>
-<p>第二个字段为<code>0082 000D 000E 0000</code>，被声明为<code>0x82=ACC_PRIVATE|ACC_TRANSIENT</code>，名称为第13个常量<code>hello2</code>，描述符为第14个常量<code>I</code>，没有额外属性。</p>
-<h2 id="方法表集合"><a href="#方法表集合" class="headerlink" title="方法表集合"></a>方法表集合</h2><p>方法表和字段表结构很类似，不过由于字段和方法的访问标志不太一样，所以实际含义不太一样。此外方法表一般会有一个属性指向Code类型，需要参考属性集合表。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">method_info &#123;</span><br><span class="line">     u2 access_flags;</span><br><span class="line">     u2 name_index;</span><br><span class="line">     u2 descriptor_index;</span><br><span class="line">     u2 attributes_count;</span><br><span class="line">     attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>Child里有6个方法，如下表所示，其中bridge表示这个方法是桥接方法，synthetic表示这个方法由编译器生成。</p>
-<table>
-<thead>
-<tr>
-<th>二进制码</th>
-<th>方法</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>0001 000f 0010 0001 0011 0000002f...</code></td>
-<td><code>public &lt;init&gt; ()V</code></td>
-</tr>
-<tr>
-<td><code>0001 0016 0017 0001 0011 0000003e...</code></td>
-<td><code>public setHello2 (I)V</code></td>
-</tr>
-<tr>
-<td><code>0001 0018 0019 0001 0011 0000002f...</code></td>
-<td><code>public getHello2 ()I</code></td>
-</tr>
-<tr>
-<td><code>0001 001a 001b 0001 0011 0000003e...</code></td>
-<td><code>public compareTo (LChild;)I</code></td>
-</tr>
-<tr>
-<td><code>1041 001d 0019 0001 0011 0000002f...</code></td>
-<td><code>public bridge synthetic getHello1 ()I</code></td>
-</tr>
-<tr>
-<td><code>1041 001a 001e 0001 0011 00000033...</code></td>
-<td><code>public bridge synthetic compareTo (Ljava/lang/Object;)I</code></td>
-</tr>
-</tbody></table>
-<p>JSL对<a href="https://docs.oracle.com/javase/tutorial/java/generics/bridgeMethods.html" target="_blank" rel="noopener">bridge method</a>的定义为：</p>
-<blockquote>
-<p>When compiling a class or interface that extends a parameterized class or implements a parameterized interface, the compiler may need to create a synthetic method, called a bridge method, as part of the type erasure process. You normally don’t need to worry about bridge methods, but you might be puzzled if one appears in a stack trace.</p>
-</blockquote>
-<p>比较奇怪的是<code>getHello1</code>也生成了一个桥接方法，我在网上查到的说法是只有类型擦除的时候才会生成bridge method，但实际上我试下来只要Child继承了Base，无论是否继承了Comparable，都会生成一个bridge的<code>getHello1()</code>。看了下反编译后的字节码，似乎bridge方法都会invokespecial/invokevirtual另一个方法，也就是说会把具体实现代理到其他方法去。</p>
-<h2 id="属性表集合"><a href="#属性表集合" class="headerlink" title="属性表集合"></a>属性表集合</h2><p>可以看出，每个方法都有一个Code类型的属性，实际上的字节码也保存在这个属性里。之前也提到过一个ConstantValue属性。JVM对属性的规定比较宽泛，也允许编译器向属性表写入自己定义的属性信息。这里只记录一些常见的属性。</p>
-<h3 id="Code属性"><a href="#Code属性" class="headerlink" title="Code属性"></a>Code属性</h3><p>完整的Code_attribute定义如下，</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">Code_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 max_stack;</span><br><span class="line">    u2 max_locals;</span><br><span class="line">    u4 code_length;</span><br><span class="line">    u1 code[code_length];</span><br><span class="line">    u2 exception_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 end_pc;</span><br><span class="line">        u2 handler_pc;</span><br><span class="line">        u2 catch_type;</span><br><span class="line">    &#125; exception_table[exception_table_length];</span><br><span class="line">    u2 attributes_count;</span><br><span class="line">    attribute_info attributes[attributes_count];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>以上一节中的<code>compareTo (LChild;)I</code>方法为例，其完整二进制代码如下：</p>
-<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">0011 0000003e 0002 0002 0000000a </span><br><span class="line">2a b4 00 02 2b b4 00 02 64 ac </span><br><span class="line">0000 </span><br><span class="line">0002</span><br><span class="line">0012 00000006 0001 0000 0019 </span><br><span class="line">0013 00000016 0002 0000 000a 0014 0015 0000 0000 000a 001c 0015 0001</span><br></pre></td></tr></table></figure>
-
-<p>可以看出，这个方法允许的最大操作数栈的最大深度为2，允许最多2个局部变量（包括形参）：max_locals参数的单位是slot，对于小于双字节的类型（如byte,char…）需要1个slot，而对double和long则需要2个slot。方法参数包括this，所以这个方法实际上参数是2。代码长度为10（<code>2a b4 00 02 2b b4 00 02 64 ac</code>），分别表示：</p>
-<table>
-<thead>
-<tr>
-<th>字节码</th>
-<th>指令</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>2a</td>
-<td><code>aload_0</code></td>
-<td>将第一个引用类型本地变量推送至栈顶</td>
-</tr>
-<tr>
-<td>b4 0002</td>
-<td><code>getfield</code></td>
-<td>获取指定类的实例域, 并将其压入栈顶。这里操作数为0x0002，查询常量池可知要把Child.hello2压栈</td>
-</tr>
-<tr>
-<td>2b</td>
-<td><code>aload_1</code></td>
-<td>将第二个引用类型本地变量推送至栈顶</td>
-</tr>
-<tr>
-<td>b4 0002</td>
-<td><code>getfield</code></td>
-<td>获取指定类的实例域, 并将其压入栈顶</td>
-</tr>
-<tr>
-<td>64</td>
-<td><code>isub</code></td>
-<td>将栈顶两int型数值相减并将结果压入栈顶</td>
-</tr>
-<tr>
-<td>ac</td>
-<td><code>ireturn</code></td>
-<td>从当前方法返回int</td>
-</tr>
-</tbody></table>
-<p>之后exception_table为空，有两个额外属性，分别是<code>LineNumberTable</code>和<code>LocalVariableTable</code>。</p>
-<h3 id="LineNumberTable属性"><a href="#LineNumberTable属性" class="headerlink" title="LineNumberTable属性"></a>LineNumberTable属性</h3><p>用于描述java源代码行号和字节码行号之间的对应关系，定义如下</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">LineNumberTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 line_number_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 line_number;	</span><br><span class="line">    &#125; line_number_table[line_number_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>所以这段代码偏移量为0的代码对应源代码的第25行，且只有一行代码。</p>
-<h3 id="LocalVariableTable属性"><a href="#LocalVariableTable属性" class="headerlink" title="LocalVariableTable属性"></a>LocalVariableTable属性</h3><p>非必须属性，用来记录每个变量的名字，方便别人调用。</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">LocalVariableTable_attribute &#123;</span><br><span class="line">    u2 attribute_name_index;</span><br><span class="line">    u4 attribute_length;</span><br><span class="line">    u2 local_variable_table_length;</span><br><span class="line">    &#123;   u2 start_pc;</span><br><span class="line">        u2 length;</span><br><span class="line">        u2 name_index;</span><br><span class="line">        u2 descriptor_index;</span><br><span class="line">        u2 index;</span><br><span class="line">    &#125; local_variable_table[local_variable_table_length];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>这段代码一共记录了两个变量名，分别是<code>this</code>和<code>o</code>，对应两个形参名。</p>
-<p>此外Child类中还有SourceFile、Signature属性，这里就不多说了。</p>
-<p>Child类基本就分析到这了，实际上少分析了几个比较重要的分析，比如执行过程中的异常处理流程、异常抛出列表等、引导方法（BootstrapMethods）、各种字节码指令（特别是异常指令和同步指令）等，之后再补充。</p>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
   </div>
 
   
   <nav class="pagination">
-    <a class="extend prev" rel="prev" href="/"><i class="fa fa-angle-left" aria-label="Previous page"></i></a><a class="page-number" href="/">1</a><span class="page-number current">2</span><a class="page-number" href="/page/3/">3</a><a class="extend next" rel="next" href="/page/3/"><i class="fa fa-angle-right" aria-label="Next page"></i></a>
+    <a class="extend prev" rel="prev" href="/"><i class="fa fa-angle-left" aria-label="Previous page"></i></a><a class="page-number" href="/">1</a><span class="page-number current">2</span><a class="page-number" href="/page/3/">3</a><a class="page-number" href="/page/4/">4</a><a class="extend next" rel="next" href="/page/3/"><i class="fa fa-angle-right" aria-label="Next page"></i></a>
   </nav>
 
 
@@ -1858,7 +1775,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-count">31</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1933,7 +1850,13 @@
         
           
         
-        <span class="site-state-item-count">32</span>
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">35</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
