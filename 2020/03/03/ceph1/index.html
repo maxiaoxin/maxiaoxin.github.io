@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="学习ceph的起因是听说ceph对小文件的读写支持很好，但也有地方说ceph更适合大文件的存储，所以还是自己确认一下。前端时间一直断断续续的看Ceph相关的书（《Ceph设计原理与实现》），现在也应该做一下笔记了。 Ceph基本架构如下，可以看到用户可以通过四种方式访问ceph（动态库、对象存储API、块存储访问、posix文件系统访问），无论哪种，最终还是落盘到RADOS上，这也是ceph的核心">
+<meta name="keywords" content="Ceph">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Ceph学习（1） CRUSH简介">
+<meta property="og:url" content="https://maxiaoxin.github.io/2020/03/03/ceph1/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="学习ceph的起因是听说ceph对小文件的读写支持很好，但也有地方说ceph更适合大文件的存储，所以还是自己确认一下。前端时间一直断断续续的看Ceph相关的书（《Ceph设计原理与实现》），现在也应该做一下笔记了。 Ceph基本架构如下，可以看到用户可以通过四种方式访问ceph（动态库、对象存储API、块存储访问、posix文件系统访问），无论哪种，最终还是落盘到RADOS上，这也是ceph的核心">
+<meta property="og:locale" content="cn">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_arch.png">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_rados_arch.png">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_cluster_top.png">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_rushq.jpeg">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_rusht.jpeg">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_straw.jpeg">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_straw2.jpeg">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_firstn.jpeg">
+<meta property="og:updated_time" content="2020-03-12T07:39:25.515Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Ceph学习（1） CRUSH简介">
+<meta name="twitter:description" content="学习ceph的起因是听说ceph对小文件的读写支持很好，但也有地方说ceph更适合大文件的存储，所以还是自己确认一下。前端时间一直断断续续的看Ceph相关的书（《Ceph设计原理与实现》），现在也应该做一下笔记了。 Ceph基本架构如下，可以看到用户可以通过四种方式访问ceph（动态库、对象存储API、块存储访问、posix文件系统访问），无论哪种，最终还是落盘到RADOS上，这也是ceph的核心">
+<meta name="twitter:image" content="https://maxiaoxin.github.io/images/ceph_arch.png">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2020/03/03/ceph1/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>Ceph学习（1） CRUSH简介 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2020/03/03/ceph1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">Ceph学习（1） CRUSH简介
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2020-03-03 00:00:00" itemprop="dateCreated datePublished" datetime="2020-03-03T00:00:00+08:00">2020-03-03</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2020-03-12 15:39:25" itemprop="dateModified" datetime="2020-03-12T15:39:25+08:00">2020-03-12</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>学习ceph的起因是听说ceph对小文件的读写支持很好，但也有地方说ceph更适合大文件的存储，所以还是自己确认一下。前端时间一直断断续续的看Ceph相关的书（《Ceph设计原理与实现》），现在也应该做一下笔记了。</p>
+<p>Ceph基本架构如下，可以看到用户可以通过四种方式访问ceph（动态库、对象存储API、块存储访问、posix文件系统访问），无论哪种，最终还是落盘到RADOS上，这也是ceph的核心。</p>
+<p>本地集群搭建可以参考<a href="https://juejin.im/post/5e17eff0f265da3e1a59a0ab" target="_blank" rel="noopener">Ubuntu通过docker快速搭建Ceph测试集群（单机部署）</a></p>
+<p><img src="/images/ceph_arch.png" alt="Ceph基本架构"></p>
+<p>Ceph存储的核心是RADOS（Reliable Autonomic Distributed Object Store，可靠自主的分布式对象存储），基本原理是我们通过object key和一些集群信息计算一个hash值，这个hash值会将其唯一的映射到某一台或者几台具体的存储设备上：只要object key和集群信息不变，那么这个映射关系就不会变；只要hash足够优秀，那么最终各个存储设备就会负载均衡。通过这种方式，我们在避免访问一个中心化的节点的同时，将数据分散在多态机器中，从而得到一个分布式的存储系统。</p>
+<p><img src="/images/ceph_rados_arch.png" alt="RADOS基本架构"></p>
+<p>这里有几个核心概念：</p>
+<ul>
+<li>OSD（Object Storage Device，对象存储设备）：一个逻辑或物理上的存储单元，可以简单理解为一个主机。有时候也指OSD守护进程。一个object的数据最终会存储在某一个OSD上。</li>
+<li>MDS（Metadata server，元数据服务器）：保存ceph元数据的服务</li>
+<li>MON（Monitor，监视器）：Ceph监控进程</li>
+<li>CRUSH（Controlled Replication Under Scalable Hashing）：ceph用户计算object地址的伪随机算法</li>
+<li>PG（Placement Group，归置组）：对象的集合，用以简化object地址计算</li>
+<li>Ceph集群运行图（Cluster Map）：Ceph 依赖于 Ceph 客户端和 OSD ，因为它们知道集群的拓扑，这个拓扑由 5 张图共同描述，统称为“集群运行图”：<ul>
+<li>Montior Map： 包含集群的 fsid（Ceph作为文件系统时的文件系统标识符） 、位置、名字、地址和端口，也包括当前版本、创建时间、最近修改时间。要查看监视器图，用 ceph mon dump 命令。</li>
+<li>OSD Map： 包含集群 fsid 、创建时间、最近修改时间、存储池列表、副本数量、归置组数量、 OSD 列表及其状态（如 up 、 in ）。要查看OSD运行图，用 ceph osd dump 命令。</li>
+<li>PG Map：包含归置组版本、其时间戳、最新的 OSD 运行图版本、占满率、以及各归置组详情，像归置组 ID 、 up set 、 acting set 、 PG 状态（如 active+clean ），和各存储池的数据使用情况统计。</li>
+<li>CRUSH Map：包含存储设备列表、故障域树状结构（如设备、主机、机架、行、房间、等等）、和存储数据时如何利用此树状结构的规则。要查看 CRUSH 规则，执行 ceph osd getcrushmap -o {filename} 命令；然后用 crushtool -d   + {comp-crushmap-filename} -o {decomp-crushmap-filename} 反编译；然后就可以用 cat 或编辑器查看了。</li>
+<li>MDS Map： 包含当前 MDS 图的版本、创建时间、最近修改时间，还包含了存储元数据的存储池、元数据服务器列表、还有哪些元数据服务器是 up 且 in 的。要查看 MDS 图，执行 ceph mds dump 。</li>
+</ul>
+</li>
+</ul>
+<p>Ceph 存储系统支持“池”概念，它是存储对象的逻辑分区。Ceph 客户端从监视器获取一张集群运行图，并把对象写入存储池。存储池的 size 或副本数、 CRUSH 规则集和归置组数量决定着 Ceph 如何放置数据。</p>
+<p>由此可见，RADOS的核心是CRUSH，它直接影响了RADOS的性能。</p>
+<p>考虑一个简单的情况：我们有一大堆objects（每个object对应唯一id），和一大堆主机，如何将这些object保存在这些主机上，使得</p>
+<ul>
+<li>可以通过objectID和少量额外信息（如当前集群拓扑图），唯一计算出其所属主机（可能有多个）</li>
+<li>统计意义上object存放应当达到负载均衡，且允许不同主机拥有不同的负载能力，允许多个副本保存在不同主机/机柜等单位上</li>
+<li>object或主机的加入/删除尽量少的影响其他object的存放位置</li>
+<li>object存放的先后顺序不应当影响计算结果</li>
+<li>同一object的不同副本应保存在不同主机上</li>
+</ul>
+<p>为了达到这些目标，Sage等人提出了CRUSH算法（<a href="https://www.ssrc.ucsc.edu/Papers/weil-sc06.pdf" target="_blank" rel="noopener">CRUSH: Controlled, Scalable, Decentralized Placement of Replicated Data</a>）。为了方便描述，CRUSH以树的形式描述集群拓扑图，并引入了两种节点bucket和device，分别表示树的中间节点和叶节点，其中只有device设备是实际的承载数据的最终设备。不同节点有不同的权重，用于描述其负载能力，以便达成负载均衡：显然，上层节点的权重是其所有直接子节点的权重之和。一个典型的集群拓扑结构如下图所示：</p>
+<p><img src="/images/ceph_cluster_top.png" alt="典型的集群拓扑结构"></p>
+<h2 id="选择算法概述"><a href="#选择算法概述" class="headerlink" title="选择算法概述"></a>选择算法概述</h2><p>在介绍CRUSH算法前，需要简单了解下RUSH算法。RUSH（Replication Under Scalable Hashing）是一个算法族，它的目标是将含有多个副本的object映射到一个可扩展的存储设备集合上。论文详见<a href="https://www.ssrc.ucsc.edu/Papers/honicky-ipdps04.pdf" target="_blank" rel="noopener">Replication Under Scalable Hashing: A Family of Algorithms for Scalable Decentralized Data Distribution</a>。RUSH中的子集群大致对应于CRUSH中的bucket，对于某个bucket，最基本的需求是从bucket中选取符合object key为x、副本号为r的子节点，称该函数为c(r,x)。不同的bucket可以有不同的策略，目前ceph支持四种不同类型的bucket，如下：</p>
+<h3 id="Uniform-Buckets"><a href="#Uniform-Buckets" class="headerlink" title="Uniform Buckets"></a>Uniform Buckets</h3><p>适用于子节点权重完全一致且不太可能改变的情况，例如公司采购一批设备后就不动了。</p>
+<p>这类bucket的计算方式为c(r,x) = (hash(x) + rp) mod m，其中p是一个预先随机指定的素数，显然这个算法是O(1)的。由于p和m互质，对于不同的r，c(r,x)一定不相同，这保证了不同副本保存在不同节点上。</p>
+<p>当然，添加/删除节点后，几乎所有的c(r,x) 都会变化，会引起大量的数据迁移。</p>
+<h3 id="List-Buckets"><a href="#List-Buckets" class="headerlink" title="List Buckets"></a>List Buckets</h3><p>这类bucket允许节点权重不同，所使用的算法为RUSH<sub>P</sub>，原始的计算流程大致如下（具体参数的含义可以参考原论文）：</p>
+<p><img src="/images/ceph_rushq.jpeg" alt="RUSHQ算法"></p>
+<p>个人理解，RUSH<sub>P</sub>按照节点从新到旧的顺序查找，尝试找到一个能够通过检测标准的节点再加入。对于节点j，其权重为m’<sub>j</sub>，0~j-1的总权重为n’<sub>j</sub>，z是一个由x,j确定的介于[0, m’<sub>j</sub>+n’<sub>j</sub>]的随机数，素数p≥m’<sub>j</sub>。令z’=(z+r*p) mod (m’<sub>j</sub>+n’<sub>j</sub>)，如果z’&lt;m’<sub>j</sub>，则认为测试通过。显然查找object的复杂度是O(n)</p>
+<p>当n’<sub>j</sub>足够大的时候，我们可以保证在[0,R)之间至多有一个r能够通过测试，这意味着不同副本可以落在不同节点上。如果所有节点都没测试通过，个人猜测可以扔在某个固定节点上，也可以调整r，直到测试通过</p>
+<p>由于是按节点添加时间的顺序从新到旧测试的，因此当有新节点加入时，只有应当落在新节点的object会被迁移。不过如果某个中间节点被删除，由于n’<sub>j</sub>发生了变化，所以对各个节点上的object分布都会有影响。</p>
+<h3 id="Tree-Buckets"><a href="#Tree-Buckets" class="headerlink" title="Tree Buckets"></a>Tree Buckets</h3><p>与List buckets非常相似，只是将bucket按照二叉树组织，原始的计算流程大致如下：</p>
+<p><img src="/images/ceph_rusht.jpeg" alt="RUSHT算法"></p>
+<p>简单来说，RUSH<sub>T</sub>算法会尝试将object放置在左/右子树中，测试标准与RUSH<sub>P</sub>很像，只是比较的时候按左/右子树的权重判断。显然查找object的复杂度是O(logn)</p>
+<p>图中没有给出<code>hash(x,node.index,r,0)</code>的算法。单从图中给出的算法看，个人理解这种树形结构可能会造成副本放置在同一台主机上。至于如何处理这种冲突，个人猜测可以不断的调整r，直到选到一个可用的节点。</p>
+<p>由于选择节点是看左右子树的权重比，因此比如当左子树权重增大时，左子树已测试通过的object不会变化，但需要调整右子树（对于减小的情况也类似）。因此叶节点的加入/删除会影响集群中半数的object的分布。</p>
+<p>我看到一种说法是</p>
+<h3 id="Straw-Buckets"><a href="#Straw-Buckets" class="headerlink" title="Straw Buckets"></a>Straw Buckets</h3><p>Straw算法的核心是为根据object key、副本号和节点权重，为每个节点计算一个hash值，选hash值最大的那个节点。显然查找object的复杂度是O(logn)。</p>
+<p>一个比较奇怪的地方在于原straw算法对权重做了特殊处理。可见，修正后的权重与其他元素有关，因此添加和删除节点时会造成不相关元素的迁移。原论文对hash算法描述的很简略，个人猜测搞这么麻烦是为了让数据分布的更均匀</p>
+<p><img src="/images/ceph_straw.jpeg" alt="Straw算法"></p>
+<p>所以ceph后来使用了straw2算法，更符合算法描述</p>
+<p><img src="/images/ceph_straw2.jpeg" alt="Straw2算法"></p>
+<p>可以看出，在添加/删除节点的时候，只对刚好hash值落在这个节点上的object会有影响。因此straw2算法的抵御结构变化的效果最好，故ceph将其作为默认的选择算法。</p>
+<h2 id="Cluter-Map"><a href="#Cluter-Map" class="headerlink" title="Cluter Map"></a>Cluter Map</h2><p>Cluter Map是Ceph集群拓扑结构的逻辑描述。Ceph集群通常是“数据中心-机架-主机-磁盘”这样的树形结构，且叶节点的ID为正，内部节点的ID为负。</p>
+<p>常见的节点类型包括osd (or device)、host、chassis、rack、row、pdu、pod、room、datacenter、zone、region、root</p>
+<p>比如我们刚才启动的集群，默认的crushmap结构如下，可以看到确实是个树形结构：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"># devices</span><br><span class="line">device 0 osd.0</span><br><span class="line">device 1 osd.1</span><br><span class="line">device 2 osd.2</span><br><span class="line"></span><br><span class="line"># buckets</span><br><span class="line">host c05592a743f2 &#123;</span><br><span class="line">        id -2           # do not change unnecessarily</span><br><span class="line">        # weight 1.000</span><br><span class="line">        alg straw</span><br><span class="line">        hash 0  # rjenkins1</span><br><span class="line">        item osd.0 weight 1.000</span><br><span class="line">&#125;</span><br><span class="line">host 4c637dadfc46 &#123;</span><br><span class="line">        id -3           # do not change unnecessarily</span><br><span class="line">        # weight 2.000</span><br><span class="line">        alg straw</span><br><span class="line">        hash 0  # rjenkins1</span><br><span class="line">        item osd.1 weight 2.000</span><br><span class="line">&#125;</span><br><span class="line">host c88b7c736087 &#123;</span><br><span class="line">        id -4           # do not change unnecessarily</span><br><span class="line">        # weight 3.000</span><br><span class="line">        alg straw</span><br><span class="line">        hash 0  # rjenkins1</span><br><span class="line">        item osd.2 weight 3.000</span><br><span class="line">&#125;</span><br><span class="line">root default &#123;</span><br><span class="line">        id -1           # do not change unnecessarily</span><br><span class="line">        # weight 6.000</span><br><span class="line">        alg straw</span><br><span class="line">        hash 0  # rjenkins1</span><br><span class="line">        item c05592a743f2 weight 1.000</span><br><span class="line">        item 4c637dadfc46 weight 2.000</span><br><span class="line">        item c88b7c736087 weight 3.000</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="Placement-Rule"><a href="#Placement-Rule" class="headerlink" title="Placement Rule"></a>Placement Rule</h2><p>Ceph支持自定义placement rule完成数据映射，每条placement rule可以包含多个操作，包括三类：</p>
+<ol>
+<li>take: 从cluster map中选择指定编号的bucket，并以此作为后续的输入，如默认的规则是从root开始选择的</li>
+<li>select: 从输入的bucket当中选择指定类型和数量的item。目前ceph支持两种select算法，分别是firstn和indep，分别对应多副本策略和纠错码策略</li>
+<li>emit: 输出最终选择结果并返回</li>
+</ol>
+<p>一个典型的rule如下：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"># rules</span><br><span class="line">rule replicated_ruleset &#123;</span><br><span class="line">        ruleset 0</span><br><span class="line">        type replicated</span><br><span class="line">        min_size 1</span><br><span class="line">        max_size 10</span><br><span class="line">        step take default</span><br><span class="line">        step chooseleaf firstn 0 type host</span><br><span class="line">        step emit</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>核心还是在于select算法的选择，典型的firstn算法如下图所示，搜索具体的某个节点大致是个深搜的过程。流程中随机因子r是由当前副本id和重试次数共同决定。</p>
+<p><img src="/images/ceph_firstn.jpeg" alt="firstn算法"></p>
+<p>选择OSD失败可能包括hash冲突、过载、网络隔离/延迟、宕机。hash冲突无法避免，但后面几种情况可能会恢复，那么读的时候应该如何处理？和写副本流程一致？有一个中心化的组件用以记录特殊情况？</p>
+<p>此外，ceph支持对OSD设置reweight，简单来说是个权重掩码，用于人工干预某个OSD的权重，降低其被选中的概率。将reweight设为0可以临时屏蔽某个OSD。</p>
+<h2 id="相关命令"><a href="#相关命令" class="headerlink" title="相关命令"></a>相关命令</h2><p>最后记录一些可能用到的命令：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">crushtool -o --build --num_osds ... <span class="comment"># 手动创建crushmap</span></span><br><span class="line">ceph osd getcrushmap -o &#123;compiled-crushmap-filename&#125; <span class="comment"># 导出当前集群的crushmap至指定文件</span></span><br><span class="line">crushtool -d &#123;compiled-crushmap-filename&#125; -o &#123;decompiled-crushmap-filename&#125; <span class="comment"># 将导出的crushmap文件反编译为可编辑版本</span></span><br><span class="line">crushtool -c &#123;decompiled-crushmap-filename&#125; -o &#123;compiled-crushmap-filename&#125; <span class="comment"># 将可编辑版本编译为二进制crushmap文件</span></span><br><span class="line">crushtool -i &#123;compiled-crushmap-filename&#125; --<span class="built_in">test</span> --min-x 0 --max-x 9 --num-rep 3 --rule-set 0 --show_mappings <span class="comment"># 模拟输入一些文件，输出映射结果</span></span><br><span class="line">crushtool -i &#123;compiled-crushmap-filename&#125; --<span class="built_in">test</span> --min-x 0 --max-x 1000000 --num-rep 3 --rule-set 0 --show_utilization <span class="comment"># 仅统计分布概况</span></span><br><span class="line">ceph osd setcrushmap -i &#123;compiled-crushmap-filename&#125; <span class="comment"># 重设crushmap</span></span><br><span class="line">ceph osd df tree <span class="comment"># 查看整个集群的空间利用率</span></span><br><span class="line">ceph osd reweight &#123;osd_numberic_id&#125; &#123;reweight&#125; <span class="comment"># 设置某个osd的reweight值</span></span><br></pre></td></tr></table></figure>
+
+<p>有些地方还不是很明白，之后确定了可能会改。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/Ceph/" rel="tag"># Ceph</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2019/12/30/kmp-find/" rel="next" title="用NFA解释KMP算法">
+                  <i class="fa fa-chevron-left"></i> 用NFA解释KMP算法
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#选择算法概述"><span class="nav-number">1.</span> <span class="nav-text">选择算法概述</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Uniform-Buckets"><span class="nav-number">1.1.</span> <span class="nav-text">Uniform Buckets</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#List-Buckets"><span class="nav-number">1.2.</span> <span class="nav-text">List Buckets</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Tree-Buckets"><span class="nav-number">1.3.</span> <span class="nav-text">Tree Buckets</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Straw-Buckets"><span class="nav-number">1.4.</span> <span class="nav-text">Straw Buckets</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Cluter-Map"><span class="nav-number">2.</span> <span class="nav-text">Cluter Map</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Placement-Rule"><span class="nav-number">3.</span> <span class="nav-text">Placement Rule</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#相关命令"><span class="nav-number">4.</span> <span class="nav-text">相关命令</span></a></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">32</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">36</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2020</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
