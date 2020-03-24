@@ -70,7 +70,7 @@
 <meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_straw.jpeg">
 <meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_straw2.jpeg">
 <meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_firstn.jpeg">
-<meta property="og:updated_time" content="2020-03-12T07:39:25.515Z">
+<meta property="og:updated_time" content="2020-03-12T07:42:52.881Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Ceph学习（1） CRUSH简介">
 <meta name="twitter:description" content="学习ceph的起因是听说ceph对小文件的读写支持很好，但也有地方说ceph更适合大文件的存储，所以还是自己确认一下。前端时间一直断断续续的看Ceph相关的书（《Ceph设计原理与实现》），现在也应该做一下笔记了。 Ceph基本架构如下，可以看到用户可以通过四种方式访问ceph（动态库、对象存储API、块存储访问、posix文件系统访问），无论哪种，最终还是落盘到RADOS上，这也是ceph的核心">
@@ -244,7 +244,7 @@
                   <i class="fa fa-calendar-check-o"></i>
                 </span>
                 <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2020-03-12 15:39:25" itemprop="dateModified" datetime="2020-03-12T15:39:25+08:00">2020-03-12</time>
+                <time title="Modified: 2020-03-12 15:42:52" itemprop="dateModified" datetime="2020-03-12T15:42:52+08:00">2020-03-12</time>
               </span>
             
           
@@ -264,7 +264,7 @@
 <p>Ceph基本架构如下，可以看到用户可以通过四种方式访问ceph（动态库、对象存储API、块存储访问、posix文件系统访问），无论哪种，最终还是落盘到RADOS上，这也是ceph的核心。</p>
 <p>本地集群搭建可以参考<a href="https://juejin.im/post/5e17eff0f265da3e1a59a0ab" target="_blank" rel="noopener">Ubuntu通过docker快速搭建Ceph测试集群（单机部署）</a></p>
 <p><img src="/images/ceph_arch.png" alt="Ceph基本架构"></p>
-<p>Ceph存储的核心是RADOS（Reliable Autonomic Distributed Object Store，可靠自主的分布式对象存储），基本原理是我们通过object key和一些集群信息计算一个hash值，这个hash值会将其唯一的映射到某一台或者几台具体的存储设备上：只要object key和集群信息不变，那么这个映射关系就不会变；只要hash足够优秀，那么最终各个存储设备就会负载均衡。通过这种方式，我们在避免访问一个中心化的节点的同时，将数据分散在多态机器中，从而得到一个分布式的存储系统。</p>
+<p>Ceph存储的核心是RADOS（Reliable Autonomic Distributed Object Store，可靠自主的分布式对象存储），基本原理是我们通过object key和一些集群信息计算一个hash值，这个hash值会将其唯一的映射到某一台或者几台具体的存储设备上：只要object key和集群信息不变，那么这个映射关系就不会变；只要hash足够优秀，那么最终各个存储设备就会负载均衡。通过这种方式，我们在避免访问一个中心化的节点的同时，将数据分散在多台机器中，从而得到一个分布式的存储系统。</p>
 <p><img src="/images/ceph_rados_arch.png" alt="RADOS基本架构"></p>
 <p>这里有几个核心概念：</p>
 <ul>
@@ -277,7 +277,7 @@
 <li>Montior Map： 包含集群的 fsid（Ceph作为文件系统时的文件系统标识符） 、位置、名字、地址和端口，也包括当前版本、创建时间、最近修改时间。要查看监视器图，用 ceph mon dump 命令。</li>
 <li>OSD Map： 包含集群 fsid 、创建时间、最近修改时间、存储池列表、副本数量、归置组数量、 OSD 列表及其状态（如 up 、 in ）。要查看OSD运行图，用 ceph osd dump 命令。</li>
 <li>PG Map：包含归置组版本、其时间戳、最新的 OSD 运行图版本、占满率、以及各归置组详情，像归置组 ID 、 up set 、 acting set 、 PG 状态（如 active+clean ），和各存储池的数据使用情况统计。</li>
-<li>CRUSH Map：包含存储设备列表、故障域树状结构（如设备、主机、机架、行、房间、等等）、和存储数据时如何利用此树状结构的规则。要查看 CRUSH 规则，执行 ceph osd getcrushmap -o {filename} 命令；然后用 crushtool -d   + {comp-crushmap-filename} -o {decomp-crushmap-filename} 反编译；然后就可以用 cat 或编辑器查看了。</li>
+<li>CRUSH Map：包含存储设备列表、故障域树状结构（如设备、主机、机架、行、房间、等等）、和存储数据时如何利用此树状结构的规则。</li>
 <li>MDS Map： 包含当前 MDS 图的版本、创建时间、最近修改时间，还包含了存储元数据的存储池、元数据服务器列表、还有哪些元数据服务器是 up 且 in 的。要查看 MDS 图，执行 ceph mds dump 。</li>
 </ul>
 </li>
@@ -372,6 +372,10 @@
 
             <div class="post-nav-prev post-nav-item">
               
+                <a href="/2020/03/12/ceph2/" rel="prev" title="Ceph学习（2） Object映射关系和BlueStore简介">
+                  Ceph学习（2） Object映射关系和BlueStore简介 <i class="fa fa-chevron-right"></i>
+                </a>
+              
             </div>
           </div>
         
@@ -434,7 +438,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">32</span>
+          <span class="site-state-item-count">33</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -517,7 +521,9 @@
         
           
         
-        <span class="site-state-item-count">36</span>
+          
+        
+        <span class="site-state-item-count">37</span>
         <span class="site-state-item-name">tags</span>
         
       </div>

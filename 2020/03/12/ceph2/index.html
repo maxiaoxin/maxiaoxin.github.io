@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+
+
+
+
+
+<html lang="cn">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=7.3.0">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=7.3.0">
+  <link rel="mask-icon" href="/images/logo.svg?v=7.3.0" color="#222">
+
+<link rel="stylesheet" href="/css/main.css?v=7.3.0">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/font-awesome.min.css?v=4.7.0">
+
+
+<script id="hexo-configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '7.3.0',
+    exturl: false,
+    sidebar: {"position":"left","display":"post","offset":12,"onmobile":false},
+    copycode: {"enable":false,"show_result":false,"style":null},
+    back2top: {"enable":true,"sidebar":false,"scrollpercent":false},
+    bookmark: {"enable":false,"color":"#222","save":"auto"},
+    fancybox: false,
+    mediumzoom: false,
+    lazyload: false,
+    pangu: false,
+    algolia: {
+      appID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    },
+    localsearch: {"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},
+    path: '',
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    translation: {
+      copy_button: 'Copy',
+      copy_success: 'Copied',
+      copy_failure: 'Copy failed'
+    }
+  };
+</script>
+
+  <meta name="description" content="Ceph使用Rados存储实际数据。对象存储的一个特点是不支持/不需要很多文件系统的特性，比如目录，因此ceph采用了绕过文件系统、通过直接管理磁盘的方式来提高存读效率。 Object映射关系Pools（存储池）个人理解很像S3的bucket概念，可以将object进行分组区分，便于管理，比如防止重名、设置quota、设置存储类型（多副本/纠错）、ruleset、副本数等。 相对于S3的bucke">
+<meta name="keywords" content="Ceph,BlueStore">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Ceph学习（2） Object映射关系和BlueStore简介">
+<meta property="og:url" content="https://maxiaoxin.github.io/2020/03/12/ceph2/index.html">
+<meta property="og:site_name" content="读书笔记">
+<meta property="og:description" content="Ceph使用Rados存储实际数据。对象存储的一个特点是不支持/不需要很多文件系统的特性，比如目录，因此ceph采用了绕过文件系统、通过直接管理磁盘的方式来提高存读效率。 Object映射关系Pools（存储池）个人理解很像S3的bucket概念，可以将object进行分组区分，便于管理，比如防止重名、设置quota、设置存储类型（多副本/纠错）、ruleset、副本数等。 相对于S3的bucke">
+<meta property="og:locale" content="cn">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_pg_map.jpeg">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_bluestore.jpg">
+<meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_bluestore_disk_arch.jpg">
+<meta property="og:updated_time" content="2020-03-24T08:05:10.362Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Ceph学习（2） Object映射关系和BlueStore简介">
+<meta name="twitter:description" content="Ceph使用Rados存储实际数据。对象存储的一个特点是不支持/不需要很多文件系统的特性，比如目录，因此ceph采用了绕过文件系统、通过直接管理磁盘的方式来提高存读效率。 Object映射关系Pools（存储池）个人理解很像S3的bucket概念，可以将object进行分组区分，便于管理，比如防止重名、设置quota、设置存储类型（多副本/纠错）、ruleset、副本数等。 相对于S3的bucke">
+<meta name="twitter:image" content="https://maxiaoxin.github.io/images/ceph_pg_map.jpeg">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2020/03/12/ceph2/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome: false,
+    isPost: true,
+    isPage: false,
+    isArchive: false
+  };
+</script>
+
+  <title>Ceph学习（2） Object映射关系和BlueStore简介 | 读书笔记</title>
+  <meta name="generator" content="Hexo 3.9.0">
+  
+
+
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .logo,
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="cn">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-meta">
+
+    <div>
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">读书笔记</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+<nav class="site-nav">
+  
+  <ul id="menu" class="menu">
+      
+      
+      
+        
+        <li class="menu-item menu-item-home">
+      
+    
+
+    <a href="/" rel="section"><i class="menu-item-icon fa fa-fw fa-home"></i> <br>Home</a>
+
+  </li>
+      
+      
+      
+        
+        <li class="menu-item menu-item-archives">
+      
+    
+
+    <a href="/archives/" rel="section"><i class="menu-item-icon fa fa-fw fa-archive"></i> <br>Archives</a>
+
+  </li>
+  </ul>
+
+    
+
+</nav>
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+      <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block post">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2020/03/12/ceph2/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">Ceph学习（2） Object映射关系和BlueStore简介
+
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2020-03-12 00:00:00" itemprop="dateCreated datePublished" datetime="2020-03-12T00:00:00+08:00">2020-03-12</time>
+            </span>
+          
+            
+
+            
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2020-03-24 16:05:10" itemprop="dateModified" datetime="2020-03-24T16:05:10+08:00">2020-03-24</time>
+              </span>
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>Ceph使用Rados存储实际数据。对象存储的一个特点是不支持/不需要很多文件系统的特性，比如目录，因此ceph采用了绕过文件系统、通过直接管理磁盘的方式来提高存读效率。</p>
+<h2 id="Object映射关系"><a href="#Object映射关系" class="headerlink" title="Object映射关系"></a>Object映射关系</h2><h3 id="Pools（存储池）"><a href="#Pools（存储池）" class="headerlink" title="Pools（存储池）"></a>Pools（存储池）</h3><p>个人理解很像S3的bucket概念，可以将object进行分组区分，便于管理，比如防止重名、设置quota、设置存储类型（多副本/纠错）、ruleset、副本数等。</p>
+<p>相对于S3的bucket，ceph中的pool的主要作用还是可以为不同组的object设置不同ruleset。比如可以创建两个pool，分别用以保存冷、热数据，对于热数据可以设置采用多副本模式、使用SSD osd，而对于冷数据可以使用raid模式、机械硬盘，从而提高效率。又或者对于不太重要的数据，可以将隔离级别降低，提高系统利用率。</p>
+<p>每个pool有唯一的id。创建Ceph时有一些默认的pool，比如rbd，其id为0。常见的关于pool的操作包括：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">ceph osd lspools <span class="comment"># 列出pools</span></span><br><span class="line">ceph osd pool create &#123;pool-name&#125; &#123;pg-num&#125; [&#123;pgp-num&#125;] [replicated] [crush-ruleset-name] [expected-num-objects] <span class="comment"># 创建pool</span></span><br><span class="line">ceph osd pool <span class="built_in">set</span>-quota &#123;pool-name&#125; [max_objects &#123;obj-count&#125;] [max_bytes &#123;bytes&#125;] <span class="comment"># 设置配额</span></span><br><span class="line">ceph osd pool delete &#123;pool-name&#125; [&#123;pool-name&#125; --yes-i-really-really-mean-it] <span class="comment"># 删除pool</span></span><br><span class="line">ceph osd pool rename &#123;current-pool-name&#125; &#123;new-pool-name&#125; <span class="comment"># 重命名pool</span></span><br><span class="line">rados df <span class="comment"># 查看统计信息</span></span><br><span class="line">ceph osd pool <span class="built_in">set</span> &#123;poolname&#125; size &#123;num-replicas&#125; <span class="comment"># 设置副本数</span></span><br></pre></td></tr></table></figure>
+
+<h3 id="Placement-Groups（归置组）"><a href="#Placement-Groups（归置组）" class="headerlink" title="Placement Groups（归置组）"></a>Placement Groups（归置组）</h3><p>为了实现不同pool之间的隔离，Ceph并没有将object直接映射到osd，而是引入了placement group作为中间层，实现两级映射，如下图所示</p>
+<p><img src="/images/ceph_pg_map.jpeg" alt="Ceph组织架构"></p>
+<p>大致是通过oid(object id)和一些meta信息（如副本总数）算出一个hash值，得到pgid(placement group id)，再用pgid和crushmap算出映射到哪些osd。由于 Ceph 集群必须能增大或缩小、并动态地重均衡。如果让客户端“知道”哪个 OSD 有哪个对象，就会导致客户端和 OSD 紧耦合；相反， CRUSH 算法把对象映射到归置组、然后再把各归置组映射到一或多个 OSD ，这一间接层可以让 Ceph 在 OSD 守护进程和底层设备上线时动态地重均衡。</p>
+<p>pgid全局唯一，由monitor统一管理，一般是类似{pid}.1, {pid}.2, {pid}.3, … 这样的形式，即以pool id为前缀。由于pool的id是全局唯一的，因此只要每个pool内的pgid不冲突就可以保证pgid全局唯一。</p>
+<p>与CRUSH算法类似，oid到pgid的映射也需要考虑扩展性和负载均衡。这个问题很像redis的hash表的扩展，redis采用的策略是使用2<sup>n</sup>作为掩码，从而导致扩展时每个桶迁移的时候只有一半的数据需要迁移。不过ceph并没有规定pg_num只能取2<sup>n</sup>，因此采用了stable_mod算法，以减少迁移量：</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">uint32 <span class="title">stable_mod</span><span class="params">(uint32 hash, uint32 pg_num, uint32 mask)</span></span>&#123;</span><br><span class="line">  <span class="keyword">if</span> ((hash &amp; mask) &lt; pg_num)&#123;</span><br><span class="line">    <span class="keyword">return</span> hash &amp; mask;</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> hash &amp; (mask &gt;&gt; <span class="number">1</span>);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>思路和之前提到的类似，通过将二进制低位相同的object尽量放置在一起。但简单的用掩码做与运算，会导致一部分object落在无效的pg上，因此将这些无效的pg重映射到低位相同的pg，达到类似的效果。</p>
+<p>显然这种做法会导致平均意义上部分pg映射到的object数是其他pg的两倍，不过迁移时确实能降低大部分移动工作。比如pg总数从10个提高到13个时，大概有18.75%的数据需要迁移，而如果用直接取摸的做法会有92.307%的数据要迁移。考虑到pgid到OSD的映射也起到一定负载均衡的效果，因此总的来说这个算法还是比较理想的。</p>
+<p>pg扩展时一部分数据迁移称为pg分裂。采用stable_mod的另一个好处是，在使用FileStore作为存储引擎时，可以以逆序hash作为目录的方式存储object，这样当pg分裂时可以通过改动一部分子目录就可以获得待迁移的数据，再将其移动到对应的osd即可。</p>
+<p>由此可以建立object-PG-OSD的映射关系。对于多副本模式，ceph写的时候会先去请求primary OSD，primary OSD接受到请求后会向所有副本发起写请求并写入本地，在所有副本响应成功后通知客户端写成功。读流程相对而言比较简单，直接读某个副本即可。</p>
+<h2 id="BlueStore简介"><a href="#BlueStore简介" class="headerlink" title="BlueStore简介"></a>BlueStore简介</h2><p>为了提高访问磁盘的效率，ceph可以选择使用BlueStore直接管理硬盘，不再进行rados对象和文件之间的转换，从而简化I/O路径。基本架构如下图所示，</p>
+<p><img src="/images/ceph_bluestore.jpg" alt="BlueStore基本架构"></p>
+<p>简单来说，BlueStore默认采用位图模式管理磁盘，并使用RockDB管理元数据；且BlueStore实现了一个小的文件系统BlueFS，支持BlueRocksEnv接口，从而能够运行RocksDB。BlueStore和BlueFS可以共享设备，也可以指定不同设备。BlueStore中的数据大致分为三类：</p>
+<ul>
+<li>对象数据，一般保存在慢速设备中</li>
+<li>元数据（如onode），由BlueFS直接管理，保存在高速设备中</li>
+<li>WAL，由BlueFS直接管理，保存在超高速设备中</li>
+</ul>
+<p>实际上如果没有足够容量的高速设备，WAL和sst也可以保存在慢速设备中，BlueStore会将这部分硬盘空间标为BlueFS正在使用。</p>
+<p>管理磁盘和内存最大的不同点在于磁盘需要以块为单位扇入/扇出，通常会以block为单位（默认4k）读写，不过为了管理方便ceph的最小分配单元min_alloc_size是block大小的整数倍（SSD默认16K，HDD默认64K）。如下图所示，Bluestore中的一个object的元数据对应于一个onode数据结构，被持久化到rocksdb中。每个onode包含若干lextent（逻辑段，可以不连续，即bluestore支持稀疏写，数据校验、压缩、共享也是以lextent为基本单位的），每个lextent会映射到某个blob上的一个区间。一个blob可能包含多个pextent，这些pextent最终对应于磁盘上的某一块数据。</p>
+<p><img src="/images/ceph_bluestore_disk_arch.jpg" alt="Object到磁盘的映射"></p>
+<p>Bluestore的读流程相对简单，只需要读到相应的block并为空洞补0即可。写流程比较复杂，即使同一个写操作也会按照min_alloc_size进行判断，拆分成若干大写（do_write_big，对齐写）和小写（do_write_small，非对齐写），具体流程可以参考<a href="http://www.sysnote.org/2016/08/19/ceph-bluestore/" target="_blank" rel="noopener">ceph存储引擎bluestore解析</a>和<a href="http://blog.wjin.org/posts/ceph-bluestore.html" target="_blank" rel="noopener">Ceph BlueStore</a>，注意在覆盖写的时候可能会需要将WAL写入rocksdb。按我理解，对于对象存储，用对齐写的概率远高于非对齐写，因此对写效率的提升是很明显的。此外，copy操作会产生带引用计数的共享blob，当发生修改时会采用copy-on-write。</p>
+<p>关于缓存，BlueStore中需要缓存两类数据：元数据（如onode）和用户数据。常见的缓存淘汰算法有LRU（Least Recently Used）和LFU（Least Frequently Used），分别优先淘汰最晚访问和最近一段时间访问频率最少的缓存，BlueStore中的元数据使用LRU算法进行管理。用户数据使用2Q算法：它使用了三个队列A1in、A1out和Am，其中A1out不保存实际数据。当有新的缓存被加载进来时，首先进入A1in队列，且被命中时不会提升其热度，直到它淘汰进入A1out。当A1out中某一项被命中时，则将其移入Am，即认为它是真正的热数据；Am中被淘汰的项也会进去A1out。采用这种算法可以识别访问相关性带来的缓存命中提高。</p>
+<p>这只是bluestore的基本流程，上层还需要根据不同的PG和object进行判断，非常复杂。感觉对磁盘管理理解的还是很肤浅，以后要补习一下常见的文件系统是如何管理磁盘的。</p>
+
+    </div>
+
+    
+    
+    
+        
+      
+
+      <footer class="post-footer">
+          
+            
+          
+          <div class="post-tags">
+            
+              <a href="/tags/Ceph/" rel="tag"># Ceph</a>
+            
+              <a href="/tags/BlueStore/" rel="tag"># BlueStore</a>
+            
+          </div>
+        
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-next post-nav-item">
+              
+                <a href="/2020/03/03/ceph1/" rel="next" title="Ceph学习（1） CRUSH简介">
+                  <i class="fa fa-chevron-left"></i> Ceph学习（1） CRUSH简介
+                </a>
+              
+            </div>
+
+            <span class="post-nav-divider"></span>
+
+            <div class="post-nav-prev post-nav-item">
+              
+            </div>
+          </div>
+        
+      </footer>
+    
+  </div>
+  
+  
+  
+  </article>
+
+  </div>
+
+
+          </div>
+          
+
+        </div>
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+        
+        
+        
+        
+      
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc" data-target="post-toc-wrap">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#Object映射关系"><span class="nav-number">1.</span> <span class="nav-text">Object映射关系</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Pools（存储池）"><span class="nav-number">1.1.</span> <span class="nav-text">Pools（存储池）</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Placement-Groups（归置组）"><span class="nav-number">1.2.</span> <span class="nav-text">Placement Groups（归置组）</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#BlueStore简介"><span class="nav-number">2.</span> <span class="nav-text">BlueStore简介</span></a></li></ol></div>
+        
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">maxiaoxin</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+  <nav class="site-state motion-element">
+      <div class="site-state-item site-state-posts">
+        
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">33</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+    
+      
+      
+      <div class="site-state-item site-state-tags">
+        
+        
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+        <span class="site-state-item-count">37</span>
+        <span class="site-state-item-name">tags</span>
+        
+      </div>
+    
+  </nav>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2020</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">maxiaoxin</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io" class="theme-link" rel="noopener" target="_blank">Hexo</a> v3.9.0</div>
+  <span class="post-meta-divider">|</span>
+  <div class="theme-info">Theme – <a href="https://theme-next.org" class="theme-link" rel="noopener" target="_blank">NexT.Muse</a> v7.3.0</div>
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/jquery/index.js?v=3.4.1"></script>
+  <script src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  <script src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+<script src="/js/utils.js?v=7.3.0"></script><script src="/js/motion.js?v=7.3.0"></script>
+<script src="/js/schemes/muse.js?v=7.3.0"></script>
+<script src="/js/next-boot.js?v=7.3.0"></script>
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+</body>
+</html>
