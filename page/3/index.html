@@ -191,6 +191,124 @@
   
   
   <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/16/jvm7/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/09/16/jvm7/" class="post-title-link" itemprop="url">JVM学习（7）编译期优化</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-09-16 00:00:00 / Modified: 21:08:08" itemprop="dateCreated datePublished" datetime="2019-09-16T00:00:00+08:00">2019-09-16</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>这一章主要介绍关于在.java代码编译为.class文件时使用的一些优化技术。实际操作时一般用javac来实现，其编译过程大致分为3个过程：</p>
+<ol>
+<li>解析和填充符号表</li>
+<li>插入式注解处理器的注解处理过程</li>
+<li>分析与字节码生成过程</li>
+</ol>
+<p>这三个步骤的关系如下：</p>
+<p><img src="/images/jvm_compile_process.png" alt="javac编译顺序"></p>
+<p>Javac编译动作入口是<code>com.sun.tools.javac.main.JavaCompiler</code>类，基本流程如下</p>
+<p><img src="/images/jvm_javac_flow.png" alt="javac"></p>
+<h2 id="解析与填充符号表"><a href="#解析与填充符号表" class="headerlink" title="解析与填充符号表"></a>解析与填充符号表</h2><h3 id="词法和语法分析"><a href="#词法和语法分析" class="headerlink" title="词法和语法分析"></a>词法和语法分析</h3><p>词法分析是将源码的字符流转变为标记（token）集合的过程，词法分析由<code>com.sun.tools.javac.parser.Scanner</code>来实现。</p>
+<p>语法分析是根据token序列构造抽象语法树（abstract syntax tree，AST），它的每个节点代表一个语法结构（construct），语法分析由<code>com.sun.tools.javac.tree.JCTree</code>来实现。之后的操作都是基于AST。</p>
+<h3 id="填充符号表"><a href="#填充符号表" class="headerlink" title="填充符号表"></a>填充符号表</h3><p>填充符号表的过程对应上图中的<code>enterTrees()</code>，符号表（symbol table）是由一组符号地址和符号信息构成的表格，在各个编译阶段都会用到：语义分析时，需要根据符号表进行语义检查（如检查一个名字的使用是否和声明一致）和产生中间代码；在目标代码生成阶段，在对符号进行地址分配时需要用到符号表。</p>
+<p>这个阶段由<code>com.sun.tools.javac.comp.Enter</code>类来实现，其出口是一个待处理列表（to do list），包含了每一个编译单元的AST顶级节点，以及package-info.java（如果有的话）的顶级节点</p>
+<h2 id="注解处理器"><a href="#注解处理器" class="headerlink" title="注解处理器"></a>注解处理器</h2><p>JDK1.5后支持了注解（annotation），可以作用于运行期；JDK1.6后提供了一组插入式注解处理器的标准API在编译期间对注解进行处理，即允许开发者对编译器的行为做一定干涉。</p>
+<p>具体可以参考<a href="https://github.com/linxiaoyang/JSR269TEST" target="_blank" rel="noopener">实践JSR269关于编译期注解的使用且搞清Lombok实现原理</a>，注意如果是自己写的话，要依赖<code>$JAVA_HOME/lib/tools.jar</code>这个包，并且由于这个步骤在编译期而非运行期，调试时需要对类似<code>javac -processor ...</code>这样的命令进行调试。</p>
+<h2 id="语义分析与字节码生成"><a href="#语义分析与字节码生成" class="headerlink" title="语义分析与字节码生成"></a>语义分析与字节码生成</h2><p>得到AST不代表源码符合逻辑，因此需要再对其进行语义检查和分析，包括标注检查和控制流分析两个步骤，分别对应图1中<code>attribute()</code>和<code>flow()</code>方法</p>
+<h3 id="标注检查"><a href="#标注检查" class="headerlink" title="标注检查"></a>标注检查</h3><p>主要检查类似变量使用前是否被声明、变量与赋值之间的数据类型是否匹配、常量折叠等。常量折叠是针对能在编译期计算出来的常量进行计算和简化，减少运行期负担。相关的类是<code>com.sun.tools.javac.comp.Attr</code>和<code>com.sun.tools.javac.comp.Check</code>。</p>
+<h3 id="数据和控制流分析"><a href="#数据和控制流分析" class="headerlink" title="数据和控制流分析"></a>数据和控制流分析</h3><p>和类加载时控制流分析类似，可以检查出诸如程序局部变量在使用前是否赋值、方法的每条路径是否都有返回值、所有异常都被处理等。还有些只能在编译期检查出来，比如一个局部变量被声明为<code>final</code>，可能编译出来的.class文件会没有相关修饰符，而编译期可以检查这个变量是否被修改过。相关的类是<code>com.sun.tools.javac.comp.Flow</code>。</p>
+<h3 id="解语法糖"><a href="#解语法糖" class="headerlink" title="解语法糖"></a>解语法糖</h3><p>语法糖（syntactic sugar）是指编程语言中增加的某些语法，它对语言功能没有影响，但更方便书写。Java的语法糖比如泛型（类型擦除）、变长参数（传个数组进去）、自动拆箱/装箱（如<code>int</code>和<code>Integer</code>转换）。这些语法糖在编译期会被还原成基础的语法结构。相关的类是<code>com.sun.tools.javac.comp.TransTypes</code>和<code>com.sun.tools.javac.comp.Lower</code>。</p>
+<h4 id="类型擦除"><a href="#类型擦除" class="headerlink" title="类型擦除"></a>类型擦除</h4><p>JDK1.5后增加了泛型，不过java是伪泛型：比如<code>ArrayList&lt;Integer&gt;</code>和<code>ArrayList&lt;String&gt;</code>在java里是同一类，而在C#里是两个不同的类，java在编译后会把具体类型替换为Object，在相关位置加入强制类型转换代码。</p>
+<p>不过类型擦除只是对Code属性中的字节码进行擦除，Signature里还有泛型信息，因此可以通过反射得到参数化类型，比如</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl;</span><br><span class="line"><span class="keyword">import</span> java.lang.reflect.Method;</span><br><span class="line"><span class="keyword">import</span> java.util.List;</span><br><span class="line"><span class="keyword">import</span> java.util.Set;</span><br><span class="line"></span><br><span class="line"><span class="keyword">public</span> <span class="class"><span class="keyword">class</span> <span class="title">HelloWorld</span> </span>&#123;</span><br><span class="line">  <span class="keyword">private</span> &lt;T&gt; <span class="function"><span class="keyword">void</span> <span class="title">hello</span><span class="params">(List&lt;T&gt; a, Set&lt;Integer&gt; b)</span></span>&#123;</span><br><span class="line">    a.forEach(System.out::println);</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    Class cls = HelloWorld.class;</span><br><span class="line">    Method method = cls.getDeclaredMethod(<span class="string">"hello"</span>, List.class, Set.class);</span><br><span class="line">    System.out.println(((ParameterizedTypeImpl)method.getGenericParameterTypes()[<span class="number">0</span>]).getActualTypeArguments()[<span class="number">0</span>]);</span><br><span class="line">    System.out.println(((ParameterizedTypeImpl)method.getGenericParameterTypes()[<span class="number">1</span>]).getActualTypeArguments()[<span class="number">0</span>]);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// T</span></span><br><span class="line"><span class="comment">// class java.lang.Integer</span></span><br></pre></td></tr></table></figure>
+
+<h4 id="自动装箱-拆箱和遍历循环"><a href="#自动装箱-拆箱和遍历循环" class="headerlink" title="自动装箱/拆箱和遍历循环"></a>自动装箱/拆箱和遍历循环</h4><p>这些解释起来比较简单，比如这样一段代码</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;Integer&gt; list = Arrays.asList(<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>);</span><br><span class="line">    <span class="keyword">int</span> s = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">for</span> (<span class="keyword">int</span> i : list)&#123;</span><br><span class="line">      s += i;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>可能会被翻译为</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;Integer&gt; list = Arrays.asList(<span class="keyword">new</span> Integer[]&#123;</span><br><span class="line">        Integer.valueOf(<span class="number">1</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">2</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">3</span>),</span><br><span class="line">        Integer.valueOf(<span class="number">4</span>)&#125;);</span><br><span class="line">    <span class="keyword">int</span> s = <span class="number">0</span>;</span><br><span class="line">    <span class="keyword">for</span> (Iterator iter = list.iterator(); iter.hasNext();)&#123;</span><br><span class="line">      <span class="keyword">int</span> i = ((Integer)iter.next()).intValue();</span><br><span class="line">      s += i;</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p>当然自动拆箱/装箱里有些坑，比如各路面试里都特别喜欢考因为类似<code>IntegerCache</code>及其上下界，导致自动装箱后的引用相同等等。简单来说由于<code>Integer</code>等类型是不可变的，也就不用担心线程安全等问题，因此可以对一些经常出现的常量（比如<code>Integer.valueOf()</code>）这种的可以进行cache，比如<code>Integer</code>里默认会对<code>[-128, 127]</code>这个范围内的数字进行cache，避免每次因为<code>Integer.valueOf()</code>创建新的对象。不过<code>new Integer()</code>总会创建新的对象。</p>
+<p>另一个坑是循环时对数组进行操作，比如</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title">main</span><span class="params">(String[] args)</span> <span class="keyword">throws</span> Exception</span>&#123;</span><br><span class="line">    List&lt;String&gt; list = <span class="keyword">new</span> ArrayList&lt;&gt;();</span><br><span class="line">    list.add(<span class="string">"123"</span>);</span><br><span class="line">    list.add(<span class="string">"456"</span>);</span><br><span class="line">    list.add(<span class="string">"798"</span>);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">for</span> (String s : list)&#123;</span><br><span class="line">      list.remove(s);</span><br><span class="line">      System.out.println(s);</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line">  <span class="comment">// 报错java.util.ConcurrentModificationException</span></span><br></pre></td></tr></table></figure>
+
+<p>解语法糖后可以看到这种删除方式会导致迭代器不可用，因此需要改为</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (Iterator&lt;String&gt; iter = list.iterator(); iter.hasNext();)&#123;</span><br><span class="line">  System.out.println(iter.next());</span><br><span class="line">  iter.remove();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="条件编译"><a href="#条件编译" class="headerlink" title="条件编译"></a>条件编译</h4><p>Java默认如果检测到某条分支永远不会执行到，会拒绝编译，最典型的是<code>return;</code>后的语句。所以一般会用</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (<span class="keyword">true</span>)&#123;</span><br><span class="line">    <span class="keyword">return</span>;</span><br><span class="line">&#125;</span><br><span class="line"><span class="comment">// ...</span></span><br></pre></td></tr></table></figure>
+
+<p>这样的方式来避免拒绝编译。实际上控制流分析后也会把相关代码忽略掉。</p>
+<p>另外比如内部类、枚举类、断言语句、<code>switch</code>枚举类和字符串、<code>try</code>的自动关闭资源等都是通过语法糖实现的。</p>
+<h3 id="字节码生成"><a href="#字节码生成" class="headerlink" title="字节码生成"></a>字节码生成</h3><p>字节码生成是javac编译过程的最后一个阶段，由<code>com.sun.tools.javac.jvm.Gen</code>类完成，除了将之前生成的信息转为字节码落盘外，还进行了少量代码添加和转换工作。比如把<code>&lt;cinit&gt;()</code>涉及到的语句合并在一起、将字符串加操作用<code>StringBuilder</code>或<code>StringBuffer</code>替换等。</p>
+<p>完成对语法树的遍历和调整后，会把填充了所有所需信息的符号表交给<code>com.sun.tools.javac.jvm.ClassWriter.writeClass()</code>来输出为字节码文件。至此编译结束。</p>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/09/10/jvm6/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1562,115 +1680,6 @@
   
   
   <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jni/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="name" content="maxiaoxin">
-      <meta itemprop="description" content="">
-      <meta itemprop="image" content="/images/avatar.gif">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="读书笔记">
-    </span>
-      <header class="post-header">
-        <h1 class="post-title" itemprop="name headline">
-            
-            <a href="/2019/08/23/jni/" class="post-title-link" itemprop="url">JNI使用中的一些注意事项</a>
-          
-        </h1>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="fa fa-calendar-o"></i>
-              </span>
-              <span class="post-meta-item-text">Posted on</span>
-
-              
-                
-              
-
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:41:05" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
-            </span>
-          
-            
-
-            
-          
-
-          
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <p>很多时候需要在JAVA中调用C/C++库，最简单的做法是使用JNI（Java Native Interface）。相关概念可以参考wiki，这里只记录一些我使用时遇到的问题。</p>
-<h3 id="内存模型和参数传递"><a href="#内存模型和参数传递" class="headerlink" title="内存模型和参数传递"></a>内存模型和参数传递</h3><p>比较麻烦的是一般Java代码中的变量保存在堆区/方法区，而JNI所调用的代码访问的变量保存在native区，这导致我们无法在本地代码中直接访问JAVA变量。如果要传递的参数/返回值比较简单、量比较少，可以直接用参数传过来。如果数据量比较大，或者不是基本类型，可能需要用byte[]传。如果数据量巨大，只能用文件等形式传递了。个人目前处理的文件一般是不超过20MB的小文件，因此选择第二种方式传递参数（虽然数据在heap区和native区来回复制也有一定代价），不过好在数据量不是很大，可以接受——另外一个使用byte[]而非DirectByteBuffer的重要原因是我还是有可能会用java代码来处理数据，而java处理DirectByteBuffer有时候很麻烦。。如果是非常大的文件（比如视频文件），使用临时文件/DirectBuffer更好一些。</p>
-<p>流数据的处理更复杂一些。现在似乎没有非常方便的在本地代码中读InputStream等的方法（当然可以做到，比如使用<code>GetMethodID&amp;Call??Method</code>等），但我没试过这种方式——即使不考虑效率因素，在本地代码中调用JAVA方法也不是一个好选择，毕竟本地代码处理JAVA运行中的各种异常实在太复杂了。最好还是将数据预处理后，交由本地代码处理，本地代码尽量保持简洁。</p>
-<p>当然最重要的还是保证内存不泄漏，本地代码中new/malloc自不必说，记得在最后调用DeleteLocalRef、ReleaseByteArrayElements等函数释放JAVA对象的引用。</p>
-<h3 id="加载动态库"><a href="#加载动态库" class="headerlink" title="加载动态库"></a>加载动态库</h3><p>我用的是org.scijava:native-lib-loader。本质上调用的还是System.load，这个库的做法是将动态库extract提取到一个临时文件，然后System.load()，不想引入新的库的话可以自己手动实现一下。</p>
-<h3 id="编译和调试"><a href="#编译和调试" class="headerlink" title="编译和调试"></a>编译和调试</h3><p>首先编译环境最好和目标运行环境一致，否则可能会出现各种意想不到的状况，比如系统库版本不兼容等。</p>
-<p>如果是自己重新写一个库可以规避掉很多问题。我遇到的情况通常是需要改写现有的库的接口，方便JAVA调用，那么至少需要</p>
-<ul>
-<li>修改源代码，暴露出可供调用的JNI外部函数</li>
-<li>改写MakeFile/CMakeLists，将原本的可执行文件编译为动态链接库</li>
-</ul>
-<p>只调试本地代码相对简单，但有些错误只有带JAVA调用时才会出现。我使用的IDE是CLion，暂时没找到比较方便的调试方法，目前的做法是加上DEBUG参数编译动态库后，</p>
-<ol>
-<li>在调用native方法前打个断点，运行至断点</li>
-<li>找到java进程的ID（ps，jps或者在程序里打印出来）</li>
-<li>CLion中Run - Attach to Local Process，选择对应的PID，在要调试的地方打断点</li>
-<li>继续java进程，进入本地代码中的断点，开始调试</li>
-</ol>
-<p>尽管GDB Remote Debug可以远程调试，但似乎不支持远程调试JNI？</p>
-<h3 id="代码编写时的注意事项"><a href="#代码编写时的注意事项" class="headerlink" title="代码编写时的注意事项"></a>代码编写时的注意事项</h3><ol>
-<li>很多库实现时只支持FILE<em>，改写为读内存很麻烦。这里推荐fmemopen和open_memstream，可以将数组转变为FILE</em>。</li>
-<li>很多C/C++代码逻辑中没有异常处理，我个人也不建议使用throw/catch。但JAVA中使用异常捕捉机制会方便很多，且有时候本地代码中遇到错误时也需要把异常信息传给java进程，那么在C/C++代码运行结束且发现运行出错时，手动抛出一个JAVA异常（调用(*env)-&gt;ThrowNew()），可能是一个比较好的风格。</li>
-</ol>
-<h3 id="线程安全"><a href="#线程安全" class="headerlink" title="线程安全"></a>线程安全</h3><p>有些库可能只支持单线程，或者可能最初设计的情景仅仅是程序运行，输入一个文件，处理，输出，程序结束：而内部实现可能是多线程。要处理多个文件，需要同时启动多个程序。</p>
-<p>如果简单的用JNI调用，很可能会在并行调用时产生冲突，因为这种库会有大量的全局/静态变量，而没有任何线程同步操作，甚至不可能同步。</p>
-<p>简单的处理方法是把JNI函数加锁，即同一时刻一个库暴露出的所有函数至多只有一个调用。复杂的处理方法就是自己手动改代码，把所有全局/静态变量统计出来放在一个struct里，调用时new一个，调用结束时delete掉。</p>
-<p>当然如果对库的了解比较深的话可以改写的更优雅一些；如果库本身很复杂，改造起来很麻烦，那就直接加锁吧。</p>
-<h3 id="避免使用较高版本的glibc"><a href="#避免使用较高版本的glibc" class="headerlink" title="避免使用较高版本的glibc"></a>避免使用较高版本的glibc</h3><p>使用时发现由于线上机器的gilbc版本可能低于本地编译环境,而glibc升级非常麻烦且会引起一系列问题,所以尽量避免使用较高版本glibc提供的函数</p>
-<p>一种避免使用较高版本glibc的办法见(Linux程序兼容),适用于低版本glibc也有此函数的情况</p>
-<ul>
-<li>查看线上环境支持的glibc版本 <code>strings /lib64/libc.so.6 | grep GLIBC_</code></li>
-<li>查看编译出来的二进制库/程序引用的glibc版本,检查有无冲突,及冲突的glibc版本 <code>readelf -s $libname | grep -oP “GLIBC_[\d.]*” | sort | uniq</code></li>
-<li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
-<li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
-</ul>
-
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-          <div class="post-eof"></div>
-        
-      </footer>
-  </div>
-  
-  
-  
-  </article>
-
-      
-    
-      
-          <article itemscope itemtype="http://schema.org/Article">
-  
-  
-  
-  <div class="post-block home">
     <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -1813,7 +1822,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">33</span>
+          <span class="site-state-item-count">34</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -1898,7 +1907,9 @@
         
           
         
-        <span class="site-state-item-count">37</span>
+          
+        
+        <span class="site-state-item-count">38</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
