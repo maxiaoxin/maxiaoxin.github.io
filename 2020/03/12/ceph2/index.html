@@ -65,7 +65,7 @@
 <meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_pg_map.jpeg">
 <meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_bluestore.jpg">
 <meta property="og:image" content="https://maxiaoxin.github.io/images/ceph_bluestore_disk_arch.jpg">
-<meta property="og:updated_time" content="2020-03-24T08:05:10.362Z">
+<meta property="og:updated_time" content="2020-03-26T08:57:38.728Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Ceph学习（2） Object映射关系和BlueStore简介">
 <meta name="twitter:description" content="Ceph使用Rados存储实际数据。对象存储的一个特点是不支持/不需要很多文件系统的特性，比如目录，因此ceph采用了绕过文件系统、通过直接管理磁盘的方式来提高存读效率。 Object映射关系Pools（存储池）个人理解很像S3的bucket概念，可以将object进行分组区分，便于管理，比如防止重名、设置quota、设置存储类型（多副本/纠错）、ruleset、副本数等。 相对于S3的bucke">
@@ -239,7 +239,7 @@
                   <i class="fa fa-calendar-check-o"></i>
                 </span>
                 <span class="post-meta-item-text">Edited on</span>
-                <time title="Modified: 2020-03-24 16:05:10" itemprop="dateModified" datetime="2020-03-24T16:05:10+08:00">2020-03-24</time>
+                <time title="Modified: 2020-03-26 16:57:38" itemprop="dateModified" datetime="2020-03-26T16:57:38+08:00">2020-03-26</time>
               </span>
             
           
@@ -264,6 +264,7 @@
 <h3 id="Placement-Groups（归置组）"><a href="#Placement-Groups（归置组）" class="headerlink" title="Placement Groups（归置组）"></a>Placement Groups（归置组）</h3><p>为了实现不同pool之间的隔离，Ceph并没有将object直接映射到osd，而是引入了placement group作为中间层，实现两级映射，如下图所示</p>
 <p><img src="/images/ceph_pg_map.jpeg" alt="Ceph组织架构"></p>
 <p>大致是通过oid(object id)和一些meta信息（如副本总数）算出一个hash值，得到pgid(placement group id)，再用pgid和crushmap算出映射到哪些osd。由于 Ceph 集群必须能增大或缩小、并动态地重均衡。如果让客户端“知道”哪个 OSD 有哪个对象，就会导致客户端和 OSD 紧耦合；相反， CRUSH 算法把对象映射到归置组、然后再把各归置组映射到一或多个 OSD ，这一间接层可以让 Ceph 在 OSD 守护进程和底层设备上线时动态地重均衡。</p>
+<p>注：后来又看了下相关的读写源码分析，发现客户端并没有从MON读PG相关信息，PGID和对应的OSD都是客户端本地计算的。</p>
 <p>pgid全局唯一，由monitor统一管理，一般是类似{pid}.1, {pid}.2, {pid}.3, … 这样的形式，即以pool id为前缀。由于pool的id是全局唯一的，因此只要每个pool内的pgid不冲突就可以保证pgid全局唯一。</p>
 <p>与CRUSH算法类似，oid到pgid的映射也需要考虑扩展性和负载均衡。这个问题很像redis的hash表的扩展，redis采用的策略是使用2<sup>n</sup>作为掩码，从而导致扩展时每个桶迁移的时候只有一半的数据需要迁移。不过ceph并没有规定pg_num只能取2<sup>n</sup>，因此采用了stable_mod算法，以减少迁移量：</p>
 <figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">uint32 <span class="title">stable_mod</span><span class="params">(uint32 hash, uint32 pg_num, uint32 mask)</span></span>&#123;</span><br><span class="line">  <span class="keyword">if</span> ((hash &amp; mask) &lt; pg_num)&#123;</span><br><span class="line">    <span class="keyword">return</span> hash &amp; mask;</span><br><span class="line">  &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">    <span class="keyword">return</span> hash &amp; (mask &gt;&gt; <span class="number">1</span>);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
