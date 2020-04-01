@@ -191,7 +191,7 @@
   
   
   <div class="post-block home">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jvm1/">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/java-dynamic-proxy/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="name" content="maxiaoxin">
@@ -205,7 +205,7 @@
       <header class="post-header">
         <h1 class="post-title" itemprop="name headline">
             
-            <a href="/2019/08/23/jvm1/" class="post-title-link" itemprop="url">JVM学习（1）事前准备</a>
+            <a href="/2019/08/23/java-dynamic-proxy/" class="post-title-link" itemprop="url">Java动态代理笔记</a>
           
         </h1>
 
@@ -220,7 +220,7 @@
                 
               
 
-              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:35:20" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:46:34" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
             </span>
           
             
@@ -239,44 +239,31 @@
     <div class="post-body" itemprop="articleBody">
 
       
-          <p>最近在线上调试时发现对JVM了解还是不足，找了本书（《深入理解Java虚拟机》）补习一下，并做些笔记。不过这本书只到java 1.7，缺少1.8之后的一些特性，需要之后再学习一个。</p>
-<h2 id="代码获取"><a href="#代码获取" class="headerlink" title="代码获取"></a>代码获取</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">hg clone http:<span class="comment">//hg.openjdk.java.net/jdk7u/jdk7u-dev</span></span><br><span class="line">cd jdk7u-dev</span><br><span class="line">chmode <span class="number">755</span> get_source.sh</span><br><span class="line">./get_source.sh</span><br></pre></td></tr></table></figure>
+          <p>今天重构代码时遇到一个可能需要动态代理的地方，感觉自己对代理模式理解还是不够，做点笔记。</p>
+<p>代理模式（Proxy Pattern）是程序设计中的一种设计模式，定义为：为其他对象提供一种代理以控制对这个对象的访问。</p>
+<p>在不希望直接调用方法/访问对象A时，希望变成操作A’，间接影响A，这样可以降低代码逻辑的复杂度。无论如何在调用者看来，它还是在访问A：即代理对调用者透明，至少调用者不需要关心proxy的实现细节和副作用。常见的使用代理的场合有：</p>
+<ol>
+<li>远程代理（Remote Proxy）：将一个远程对象包装成本地对象。WIKI的例子是ATM，ATM保存了银行信息，用户访问ATM等同于访问银行。</li>
+<li>虚拟代理（Virtual Proxy）：对象可以不实际存在，只有当访问时才会真正生成（也可以实现一部分）。参考延迟加载。</li>
+<li>保护代理（Protection Proxy）：在实际调用前/中/后进行资源安全性的检查。</li>
+<li>Copy-on-Write代理：虚拟代理的一种。把复制（克隆）拖延到只有在客户端需要时，才真正采取行动。</li>
+<li>Cache代理：为某一个目标操作的结果提供临时的存储空间，以便多个客户端可以共享这些结果。</li>
+<li>防火墙（Firewall）代理：保护目标，不让恶意用户接近。</li>
+<li>同步化（Synchronization）代理：使几个用户能够同时使用一个对象而没有冲突。</li>
+<li>智能引用（Smart Reference）代理：当一个对象被引用时，提供一些额外的操作，比如将对此对象调用的次数记录下来等。</li>
+</ol>
+<p>组合/继承都可以实现代理模式，当然静态代理在JAVA里使用继承会简单一些。即A’继承A，在每个父方法调用前后做一些操作。</p>
+<p>JAVA也支持动态代理，按我理解应该是组合模式。对于真实对象object，需要实现一个InvocationHandler接口，再通过Proxy.newProxyInstance(classLoader,interfaces,handler)来创建代理对象。</p>
+<ol>
+<li>classLoader: 生成的代理类所在的classLoader。（下次学习一下classLoader）。</li>
+<li>interfaces：想要代理的接口的集合。</li>
+<li>handler：我们刚才创建的handler，使用它来实际调用object，并做一些其他操作。</li>
+</ol>
+<p>第二个参数interfaces很重要，JAVA动态代理会动态创建一个类似<code>com.sun.proxy.$Proxy0</code>的类，这个类实现了所有的interfaces。在继承关系比较复杂的情况下，个人建议写死会比较好，使用object.getClass().getInterfaces()会出现一些意想不到的情况。比如有接口I1,I2,I3,C1实现了I1,I2，C2继承了C1，且实现了I3，那么一个C2的实例c2.getClass().getInterfaces()返回结果只有I3，无法代理I1和I2。</p>
+<p>在实现InvocationHandler接口时，我们需要实现invoke(proxy, method, args)方法，其中可能会调用method.invode(object,args)，当object因为某些原因报错时，method.invode会抛出InvocationTargetException异常：这与所预想抛出的异常不一致，从而导致上层调用者捕捉不到对应的异常。因此最好写成</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">try</span>&#123;</span><br><span class="line">  <span class="keyword">return</span> method.invoke(client, args);</span><br><span class="line">&#125; <span class="keyword">catch</span> (InvocationTargetException e)&#123;</span><br><span class="line">  <span class="keyword">throw</span> e.getCause();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 
-<h2 id="编译运行"><a href="#编译运行" class="headerlink" title="编译运行"></a>编译运行</h2><p>首先需要自己配一大堆环境变量，特别是把JAVA_HOME、CLASSPATH、LD_LIBRARY_PATH这几个unset掉</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line">export LANG=C</span><br><span class="line">export ALT_BOOTDIR=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALT_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export BUILD_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALLOW_DOWNLOADS=<span class="keyword">true</span></span><br><span class="line">export HOTSPOT_BUILD_JOBS=<span class="number">6</span></span><br><span class="line">export ALT_PARALLEL_COMPILE_JOBS=<span class="number">6</span></span><br><span class="line">export SKIP_COMPARE_IMAGES=<span class="keyword">true</span></span><br><span class="line">export USE_PRECOMPILED_HEADER=<span class="keyword">true</span></span><br><span class="line">export BUILD_LANGTOOLS=<span class="keyword">true</span></span><br><span class="line">export BUILD_HOTSPOT=<span class="keyword">true</span></span><br><span class="line">export BUILD_JDK=<span class="keyword">true</span></span><br><span class="line">export SKIP_DEBUG_BUILD=<span class="keyword">false</span></span><br><span class="line">export SKIP_FASTDEBUG_BUILD=<span class="keyword">true</span></span><br><span class="line">export DEBUG_NAME=debug</span><br><span class="line">export BUILD_DEPLOY=<span class="keyword">false</span></span><br><span class="line">export BUILD_INSTALL=<span class="keyword">false</span></span><br><span class="line">export ALT_OUTPUTDIR=/home/maxiaoxin/workspace/github/jdk7u-dev/output/</span><br><span class="line">export ALT_FREETYPE_LIB_PATH=/opt/soft/freetype2/lib</span><br><span class="line">export ALT_FREETYPE_HEADERS_PATH=/opt/soft/freetype2/include/freetype2</span><br><span class="line">export ALT_CUPS_HEADERS_PATH=/opt/soft/cups/include/</span><br><span class="line">export DISABLE_HOTSPOT_OS_VERSION_CHECK=ok </span><br><span class="line">export DEBUG_BINARIES=<span class="keyword">true</span></span><br><span class="line">unset JAVA_HOME</span><br><span class="line">unset CLASSPATH</span><br><span class="line">unset LD_LIBRARY_PATH</span><br></pre></td></tr></table></figure>
-
-<p>然后运行<code>make sanity &amp;&amp; make DISABLE_HOTSPOT_OS_VERSION_CHECK=ok</code><br>编译成功后<code>output-debug/j2sdk-image</code>即为jdk的目录，执行<code>export JAVA_HOME=$path &amp;&amp; ./bin/java -version</code>可以验证下JVM的版本<br>可以只编译hotspot，需要执行<code>cd hotspot/make &amp;&amp; make DEBUG_BINARIES=true</code><br>在<code>/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmgd64_compiler2/product</code>目录下，找到env.sh文件，修改</p>
-<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">export</span> JAVA_HOME=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/j2sdk-image</span><br><span class="line"><span class="built_in">export</span> CLASSPATH=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmg:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/rt.jar:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/i18n.jar</span><br><span class="line"><span class="built_in">export</span> HOTSPOT_BUILD_USER=<span class="string">"maxiaoxin in hotspot"</span></span><br><span class="line"><span class="built_in">export</span> LD_LIBRARY_PATH=:&#123;JAVA_HOME&#125;/jre/lib/amd64</span><br></pre></td></tr></table></figure>
-
-<p>然后运行<code>source env.sh &amp;&amp; ./gamma -version</code>可以验证一下虚拟机版本，执行<code>./gamma Queens</code>可以测试一下用编译好的虚拟机解决八皇后问题，其中Queens.class如果不存在可以自己找到源代码并编译一下</p>
-<h2 id="部分错误"><a href="#部分错误" class="headerlink" title="部分错误"></a>部分错误</h2><p>有各种依赖需要自己手动装一下，忘了记录下来了，比如cups和freetype2需要自己安装一下，并设置环境变量（不一定要设置在系统变量里）</p>
-<h3 id="undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’"><a href="#undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’" class="headerlink" title="undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work(oopDesc*, int)’"></a>undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work<oopdesc>(oopDesc*, int)’</oopdesc></h3><p>参考<a href="https://www.cnblogs.com/abaoge/p/7932612.html" target="_blank" rel="noopener">编译虚拟机jvm——openjdk的编译</a><br>解决：将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.cpp</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;<span class="class"><span class="keyword">class</span> <span class="title">T</span>&gt; </span></span><br><span class="line"><span class="class"><span class="title">void</span> <span class="title">G1SATBCardTableModRefBS</span>:</span>:write_ref_array_pre_work(T* dst, <span class="keyword">int</span> count) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!JavaThread::satb_mark_queue_set().is_active()) <span class="keyword">return</span>; </span><br><span class="line">  T* elem_ptr = dst; </span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; count; i++, elem_ptr++) &#123; </span><br><span class="line">    T heap_oop = oopDesc::load_heap_oop(elem_ptr); </span><br><span class="line">    <span class="keyword">if</span> (!oopDesc::is_null(heap_oop)) &#123; </span><br><span class="line">      enqueue(oopDesc::decode_heap_oop_not_null(heap_oop)); </span><br><span class="line">    &#125; </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>内容下加上如下</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//2017-10-19 Vicent_Chen added </span></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123;</span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; <span class="comment">//2017-10-19 Vicent_Chen added</span></span><br></pre></td></tr></table></figure>
-
-<p>将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.hpp如下部分</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>注释掉，然后再加入</p>
-<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span></span>; </span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_unintialized)</span></span>;</span><br></pre></td></tr></table></figure>
-
-<h3 id="“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed"><a href="#“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed" class="headerlink" title="“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed"></a>“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed</h3><p>参考<a href="https://segmentfault.com/q/1010000010420043" target="_blank" rel="noopener">ubuntu openjdk jmx编译异常,无法继续</a>，需要手动编译两个类</p>
-<p>不过我试下来这个错误是随机出现的。。。实在崩溃。</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cd $&#123;OUTPUT_DIR&#125;/classes/javax/management/remote/rmi/</span><br><span class="line">javac RMIServerImpl_Stub.java</span><br><span class="line">javac RMIConnectionImpl_Stub.java</span><br></pre></td></tr></table></figure>
-
-<h3 id="其他错误"><a href="#其他错误" class="headerlink" title="其他错误"></a>其他错误</h3><p>参考<a href="https://blog.csdn.net/beswkwangbo/article/details/38757677" target="_blank" rel="noopener">Ubuntu 14.04 64 bit 编译 openjdk 7</a></p>
-<ul>
-<li>第一个是 fatal error: sys/cdefs.h: No such file or directory。与gcc版本有关，解决办法：sudo apt-get install libc6-dev-i386</li>
-<li>第二个是 bits/c++config.h: No such file or directory。与g++版本有关，解决办法：sudo apt-get install g++-4.8-multilib</li>
-<li>第三个是cc1plus: error: the “stabs” debug format cannot be used with pre-compiled headers [-Werror=deprecated]，因为高版本的gcc不再支持stabs，解决办法：在make命令中加上 DEBUG_BINARIES=true</li>
-<li>第四个是，cc1plus all warnings being treated as errors ubuntu。解决办法：在hotspot/make/makefiles/gcc.make 中，把 -Werror 选项去掉。</li>
-</ul>
-<p>很麻烦，因为CLion只支持CMake，所以编译还得自己编译。不过调试还是没问题，自己写一个简单的CMakelists.txt，就可以调试了。</p>
-<h2 id="导入CLion"><a href="#导入CLion" class="headerlink" title="导入CLion"></a>导入CLion</h2><figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">cmake_minimum_required(VERSION 3.4.1)</span><br><span class="line">project(jdk7u CXX)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_CXX_STANDARD 11)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_VERBOSE_MAKEFILE 1)</span><br><span class="line"></span><br><span class="line">add_custom_target(gamma</span><br><span class="line">        WORKING_DIRECTORY <span class="variable">$&#123;CMAKE_CURRENT_SOURCE_DIR&#125;</span>)</span><br></pre></td></tr></table></figure>
-
-<p>启动clion之前需要把刚才那一堆环境变量搞进去，在执行前还需要把JVM环境变量设置好。</p>
+<p>另一个实现代理的第三方库是<a href="https://github.com/cglib/cglib" target="_blank" rel="noopener">cglib</a>。暂时还没看，据说相比于java内置的动态代理，这个库可以不用非要实现某些接口，可以直接拦截。Spring的AOP就是用cglib实现的。</p>
 
         
       
@@ -386,6 +373,118 @@
 <li>查看使用这个版本glibc的函数 <code>readelf -s $libname | grep GLIBC_2.x</code></li>
 <li>找到后在对应位置添加<code>__asm__(&quot;.symver func,func@GLIBC_2.2.5&quot;);</code>,其中glibc版本可以指定为线上机器允许的版本</li>
 </ul>
+
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+          <div class="post-eof"></div>
+        
+      </footer>
+  </div>
+  
+  
+  
+  </article>
+
+      
+    
+      
+          <article itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block home">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/08/23/jvm1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="maxiaoxin">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="读书笔记">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+            
+            <a href="/2019/08/23/jvm1/" class="post-title-link" itemprop="url">JVM学习（1）事前准备</a>
+          
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              
+                
+              
+
+              <time title="Created: 2019-08-23 00:00:00 / Modified: 16:35:20" itemprop="dateCreated datePublished" datetime="2019-08-23T00:00:00+08:00">2019-08-23</time>
+            </span>
+          
+            
+
+            
+          
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <p>最近在线上调试时发现对JVM了解还是不足，找了本书（《深入理解Java虚拟机》）补习一下，并做些笔记。不过这本书只到java 1.7，缺少1.8之后的一些特性，需要之后再学习一个。</p>
+<h2 id="代码获取"><a href="#代码获取" class="headerlink" title="代码获取"></a>代码获取</h2><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">hg clone http:<span class="comment">//hg.openjdk.java.net/jdk7u/jdk7u-dev</span></span><br><span class="line">cd jdk7u-dev</span><br><span class="line">chmode <span class="number">755</span> get_source.sh</span><br><span class="line">./get_source.sh</span><br></pre></td></tr></table></figure>
+
+<h2 id="编译运行"><a href="#编译运行" class="headerlink" title="编译运行"></a>编译运行</h2><p>首先需要自己配一大堆环境变量，特别是把JAVA_HOME、CLASSPATH、LD_LIBRARY_PATH这几个unset掉</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line">export LANG=C</span><br><span class="line">export ALT_BOOTDIR=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALT_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export BUILD_JDK_IMPORT_PATH=/opt/soft/jdk1.6.0_35</span><br><span class="line">export ALLOW_DOWNLOADS=<span class="keyword">true</span></span><br><span class="line">export HOTSPOT_BUILD_JOBS=<span class="number">6</span></span><br><span class="line">export ALT_PARALLEL_COMPILE_JOBS=<span class="number">6</span></span><br><span class="line">export SKIP_COMPARE_IMAGES=<span class="keyword">true</span></span><br><span class="line">export USE_PRECOMPILED_HEADER=<span class="keyword">true</span></span><br><span class="line">export BUILD_LANGTOOLS=<span class="keyword">true</span></span><br><span class="line">export BUILD_HOTSPOT=<span class="keyword">true</span></span><br><span class="line">export BUILD_JDK=<span class="keyword">true</span></span><br><span class="line">export SKIP_DEBUG_BUILD=<span class="keyword">false</span></span><br><span class="line">export SKIP_FASTDEBUG_BUILD=<span class="keyword">true</span></span><br><span class="line">export DEBUG_NAME=debug</span><br><span class="line">export BUILD_DEPLOY=<span class="keyword">false</span></span><br><span class="line">export BUILD_INSTALL=<span class="keyword">false</span></span><br><span class="line">export ALT_OUTPUTDIR=/home/maxiaoxin/workspace/github/jdk7u-dev/output/</span><br><span class="line">export ALT_FREETYPE_LIB_PATH=/opt/soft/freetype2/lib</span><br><span class="line">export ALT_FREETYPE_HEADERS_PATH=/opt/soft/freetype2/include/freetype2</span><br><span class="line">export ALT_CUPS_HEADERS_PATH=/opt/soft/cups/include/</span><br><span class="line">export DISABLE_HOTSPOT_OS_VERSION_CHECK=ok </span><br><span class="line">export DEBUG_BINARIES=<span class="keyword">true</span></span><br><span class="line">unset JAVA_HOME</span><br><span class="line">unset CLASSPATH</span><br><span class="line">unset LD_LIBRARY_PATH</span><br></pre></td></tr></table></figure>
+
+<p>然后运行<code>make sanity &amp;&amp; make DISABLE_HOTSPOT_OS_VERSION_CHECK=ok</code><br>编译成功后<code>output-debug/j2sdk-image</code>即为jdk的目录，执行<code>export JAVA_HOME=$path &amp;&amp; ./bin/java -version</code>可以验证下JVM的版本<br>可以只编译hotspot，需要执行<code>cd hotspot/make &amp;&amp; make DEBUG_BINARIES=true</code><br>在<code>/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmgd64_compiler2/product</code>目录下，找到env.sh文件，修改</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">export</span> JAVA_HOME=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/j2sdk-image</span><br><span class="line"><span class="built_in">export</span> CLASSPATH=/home/maxiaoxin/workspace/github/jdk7u-dev/output-debug/hotspot/outputdir/linux_amd64_compiler2/jvmg:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/rt.jar:<span class="variable">$&#123;JAVA_HOME&#125;</span>/jre/lib/i18n.jar</span><br><span class="line"><span class="built_in">export</span> HOTSPOT_BUILD_USER=<span class="string">"maxiaoxin in hotspot"</span></span><br><span class="line"><span class="built_in">export</span> LD_LIBRARY_PATH=:&#123;JAVA_HOME&#125;/jre/lib/amd64</span><br></pre></td></tr></table></figure>
+
+<p>然后运行<code>source env.sh &amp;&amp; ./gamma -version</code>可以验证一下虚拟机版本，执行<code>./gamma Queens</code>可以测试一下用编译好的虚拟机解决八皇后问题，其中Queens.class如果不存在可以自己找到源代码并编译一下</p>
+<h2 id="部分错误"><a href="#部分错误" class="headerlink" title="部分错误"></a>部分错误</h2><p>有各种依赖需要自己手动装一下，忘了记录下来了，比如cups和freetype2需要自己安装一下，并设置环境变量（不一定要设置在系统变量里）</p>
+<h3 id="undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’"><a href="#undefined-reference-to-‘void-G1SATBCardTableModRefBS-write-ref-array-pre-work-oopDesc-int-’" class="headerlink" title="undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work(oopDesc*, int)’"></a>undefined reference to ‘void G1SATBCardTableModRefBS::write_ref_array_pre_work<oopdesc>(oopDesc*, int)’</oopdesc></h3><p>参考<a href="https://www.cnblogs.com/abaoge/p/7932612.html" target="_blank" rel="noopener">编译虚拟机jvm——openjdk的编译</a><br>解决：将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.cpp</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">template</span> &lt;<span class="class"><span class="keyword">class</span> <span class="title">T</span>&gt; </span></span><br><span class="line"><span class="class"><span class="title">void</span> <span class="title">G1SATBCardTableModRefBS</span>:</span>:write_ref_array_pre_work(T* dst, <span class="keyword">int</span> count) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!JavaThread::satb_mark_queue_set().is_active()) <span class="keyword">return</span>; </span><br><span class="line">  T* elem_ptr = dst; </span><br><span class="line">  <span class="keyword">for</span> (<span class="keyword">int</span> i = <span class="number">0</span>; i &lt; count; i++, elem_ptr++) &#123; </span><br><span class="line">    T heap_oop = oopDesc::load_heap_oop(elem_ptr); </span><br><span class="line">    <span class="keyword">if</span> (!oopDesc::is_null(heap_oop)) &#123; </span><br><span class="line">      enqueue(oopDesc::decode_heap_oop_not_null(heap_oop)); </span><br><span class="line">    &#125; </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>内容下加上如下</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//2017-10-19 Vicent_Chen added </span></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123;</span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="keyword">void</span> G1SATBCardTableModRefBS::write_ref_array_pre(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized) &#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; <span class="comment">//2017-10-19 Vicent_Chen added</span></span><br></pre></td></tr></table></figure>
+
+<p>将hotspot/src/share/vm/gc_implementation/g1里的g1SATBCardTableModRefBS.hpp如下部分</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125; </span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span> </span>&#123; </span><br><span class="line">  <span class="keyword">if</span> (!dest_uninitialized) &#123; </span><br><span class="line">    write_ref_array_pre_work(dst, count); </span><br><span class="line">  &#125; </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>注释掉，然后再加入</p>
+<figure class="highlight cpp"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(oop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_uninitialized)</span></span>; </span><br><span class="line"><span class="function"><span class="keyword">virtual</span> <span class="keyword">void</span> <span class="title">write_ref_array_pre</span><span class="params">(narrowOop* dst, <span class="keyword">int</span> count, <span class="keyword">bool</span> dest_unintialized)</span></span>;</span><br></pre></td></tr></table></figure>
+
+<h3 id="“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed"><a href="#“classes-javax-management-remote-rmi-RMIConnectionImpl-Stub-class”-failed" class="headerlink" title="“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed"></a>“classes/javax/management/remote/rmi/RMIConnectionImpl_Stub.class” failed</h3><p>参考<a href="https://segmentfault.com/q/1010000010420043" target="_blank" rel="noopener">ubuntu openjdk jmx编译异常,无法继续</a>，需要手动编译两个类</p>
+<p>不过我试下来这个错误是随机出现的。。。实在崩溃。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cd $&#123;OUTPUT_DIR&#125;/classes/javax/management/remote/rmi/</span><br><span class="line">javac RMIServerImpl_Stub.java</span><br><span class="line">javac RMIConnectionImpl_Stub.java</span><br></pre></td></tr></table></figure>
+
+<h3 id="其他错误"><a href="#其他错误" class="headerlink" title="其他错误"></a>其他错误</h3><p>参考<a href="https://blog.csdn.net/beswkwangbo/article/details/38757677" target="_blank" rel="noopener">Ubuntu 14.04 64 bit 编译 openjdk 7</a></p>
+<ul>
+<li>第一个是 fatal error: sys/cdefs.h: No such file or directory。与gcc版本有关，解决办法：sudo apt-get install libc6-dev-i386</li>
+<li>第二个是 bits/c++config.h: No such file or directory。与g++版本有关，解决办法：sudo apt-get install g++-4.8-multilib</li>
+<li>第三个是cc1plus: error: the “stabs” debug format cannot be used with pre-compiled headers [-Werror=deprecated]，因为高版本的gcc不再支持stabs，解决办法：在make命令中加上 DEBUG_BINARIES=true</li>
+<li>第四个是，cc1plus all warnings being treated as errors ubuntu。解决办法：在hotspot/make/makefiles/gcc.make 中，把 -Werror 选项去掉。</li>
+</ul>
+<p>很麻烦，因为CLion只支持CMake，所以编译还得自己编译。不过调试还是没问题，自己写一个简单的CMakelists.txt，就可以调试了。</p>
+<h2 id="导入CLion"><a href="#导入CLion" class="headerlink" title="导入CLion"></a>导入CLion</h2><figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">cmake_minimum_required(VERSION 3.4.1)</span><br><span class="line">project(jdk7u CXX)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_CXX_STANDARD 11)</span><br><span class="line"><span class="built_in">set</span>(CMAKE_VERBOSE_MAKEFILE 1)</span><br><span class="line"></span><br><span class="line">add_custom_target(gamma</span><br><span class="line">        WORKING_DIRECTORY <span class="variable">$&#123;CMAKE_CURRENT_SOURCE_DIR&#125;</span>)</span><br></pre></td></tr></table></figure>
+
+<p>启动clion之前需要把刚才那一堆环境变量搞进去，在执行前还需要把JVM环境变量设置好。</p>
 
         
       
@@ -606,7 +705,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">34</span>
+          <span class="site-state-item-count">35</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -693,7 +792,11 @@
         
           
         
-        <span class="site-state-item-count">38</span>
+          
+        
+          
+        
+        <span class="site-state-item-count">40</span>
         <span class="site-state-item-name">tags</span>
         
       </div>

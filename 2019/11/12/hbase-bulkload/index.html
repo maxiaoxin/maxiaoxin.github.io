@@ -58,7 +58,7 @@
 <meta name="keywords" content="BulkLoad,HBase">
 <meta property="og:type" content="article">
 <meta property="og:title" content="HBase BulkLoad简单用法">
-<meta property="og:url" content="https://maxiaoxin.github.io/2019/11/12/hbase-buckload/index.html">
+<meta property="og:url" content="https://maxiaoxin.github.io/2019/11/12/hbase-bulkload/index.html">
 <meta property="og:site_name" content="读书笔记">
 <meta property="og:description" content="再更新一下，之前介绍的搞法会需要先通过MR作业生成一些HFile文件，但其实不一定需要用MR完成。这点可以看HFileOutputFormat2.class的源码，其中写HFile的核心是createRecordWriter()，而这个方法其实并没有用到MR作业的任何特性。 那么就可以自己手动把这段代码提取出来，生成一个类似RecordWriter&amp;lt;ImmutableBytesWritabl">
 <meta property="og:locale" content="cn">
@@ -66,7 +66,7 @@
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="HBase BulkLoad简单用法">
 <meta name="twitter:description" content="再更新一下，之前介绍的搞法会需要先通过MR作业生成一些HFile文件，但其实不一定需要用MR完成。这点可以看HFileOutputFormat2.class的源码，其中写HFile的核心是createRecordWriter()，而这个方法其实并没有用到MR作业的任何特性。 那么就可以自己手动把这段代码提取出来，生成一个类似RecordWriter&amp;lt;ImmutableBytesWritabl">
-  <link rel="canonical" href="https://maxiaoxin.github.io/2019/11/12/hbase-buckload/">
+  <link rel="canonical" href="https://maxiaoxin.github.io/2019/11/12/hbase-bulkload/">
 
 
 <script id="page-configurations">
@@ -196,7 +196,7 @@
   
   
   <div class="post-block post">
-    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/12/hbase-buckload/">
+    <link itemprop="mainEntityOfPage" href="https://maxiaoxin.github.io/2019/11/12/hbase-bulkload/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="name" content="maxiaoxin">
@@ -318,7 +318,7 @@
 
             <div class="post-nav-prev post-nav-item">
               
-                <a href="/2019/12/05/hbase-buckload2/" rel="prev" title="记录一下HBase BulkLoad使用过程中遇到的坑">
+                <a href="/2019/12/05/hbase-bulkload2/" rel="prev" title="记录一下HBase BulkLoad使用过程中遇到的坑">
                   记录一下HBase BulkLoad使用过程中遇到的坑 <i class="fa fa-chevron-right"></i>
                 </a>
               
@@ -382,7 +382,7 @@
         
           <a href="/archives/">
         
-          <span class="site-state-item-count">34</span>
+          <span class="site-state-item-count">35</span>
           <span class="site-state-item-name">posts</span>
         </a>
       </div>
@@ -469,7 +469,11 @@
         
           
         
-        <span class="site-state-item-count">38</span>
+          
+        
+          
+        
+        <span class="site-state-item-count">40</span>
         <span class="site-state-item-name">tags</span>
         
       </div>
